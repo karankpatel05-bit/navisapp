@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Navis ESP32 Controller</title>
+  <meta name="description" content="Direct WebSocket controller for Navis Robot">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="background-gradient"></div>
+  <div class="blob blob-1"></div>
+  <div class="blob blob-2"></div>
+  
+  <main class="glass-container">
+    <header>
+      <h1>NAVIS<span class="highlight">.</span>CTRL</h1>
+      <div id="status-badge" class="badge disconnected">Disconnected</div>
+    </header>
+
+    <section class="card connection-panel">
+      <h2>Connection</h2>
+      <div class="input-group">
+        <label for="esp-ip">ESP32 IP Address</label>
+        <div class="input-wrapper">
+          <input type="text" id="esp-ip" placeholder="e.g., 192.168.1.100">
+          <button id="connect-btn" class="btn primary">Connect</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card control-panel">
+      <h2>Direct Control</h2>
+      
+      <div class="control-grid">
+        <div class="control-item">
+          <h3>Eyes</h3>
+          <button id="toggle-eyes-btn" class="btn toggle">Open Eyes</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card speech-panel">
+      <h2>Speech & Animation</h2>
+      <div class="input-group">
+        <label for="tts-input">Text to Speech</label>
+        <textarea id="tts-input" rows="3" placeholder="Type something for Navis to say..."></textarea>
+      </div>
+      <button id="speak-btn" class="btn accent" disabled>
+        <span class="icon">🎙️</span> Speak
+      </button>
+      <div class="animation-status">
+        Mouth State: <span id="mouth-state-label">Idle</span>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
