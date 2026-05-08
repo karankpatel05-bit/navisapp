@@ -145,7 +145,12 @@ class NavisApp {
                 this.showConnectionError('Connection failed. Check IP & Network.');
             };
         } catch (e) {
-            this.showConnectionError('Invalid IP address format.');
+            if (e.name === 'SecurityError') {
+                this.showConnectionError('HTTPS Security Error: Cannot connect to insecure ESP32 (ws://). Try downloading the HTML file and opening it locally.');
+            } else {
+                this.showConnectionError('Invalid IP address format.');
+            }
+            console.error(e);
         }
     }
 
