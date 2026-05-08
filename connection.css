@@ -1,0 +1,127 @@
+/* ── Connection Overlay ────────────────────────────────────────── */
+#connection-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(145deg, rgba(8, 11, 26, 0.95) 0%, rgba(15, 21, 53, 0.98) 100%);
+    backdrop-filter: blur(24px);
+    transition: opacity 0.5s ease-out, visibility 0.5s;
+}
+
+#connection-overlay.hidden {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.connection-card {
+    background: var(--surface);
+    border: 1px solid var(--surface-border);
+    border-radius: var(--radius);
+    padding: 40px;
+    width: 100%;
+    max-width: 480px;
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    animation: fadeUp 0.8s ease-out;
+}
+
+.connection-card .logo {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    border: 2px solid var(--accent-glow);
+    box-shadow: 0 0 30px var(--accent-glow);
+    margin-bottom: 24px;
+    animation: logoPulse 3s infinite;
+}
+
+.connection-card h2 {
+    font-family: var(--font-brand);
+    font-size: 1.8rem;
+    margin-bottom: 10px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-light));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: 2px;
+}
+
+.connection-card p {
+    color: var(--text-2);
+    font-size: 0.95rem;
+    margin-bottom: 30px;
+}
+
+.form-group {
+    text-align: left;
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--text-2);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 14px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--surface-border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 1rem;
+    transition: all var(--transition);
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.btn-primary {
+    width: 100%;
+    padding: 16px;
+    background: linear-gradient(135deg, var(--accent), #e6700a);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition);
+    box-shadow: 0 4px 15px var(--accent-glow);
+    margin-top: 10px;
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px var(--accent-glow);
+}
+
+.btn-primary:active {
+    transform: translateY(0);
+}
+
+.status-text {
+    margin-top: 16px;
+    font-size: 0.85rem;
+    color: var(--text-3);
+}
+
+.status-text.error {
+    color: var(--red);
+}
+
+.status-text.success {
+    color: var(--green);
+}
