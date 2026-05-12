@@ -80,6 +80,7 @@ class NavisApp {
         this.voicesLoaded = false;
         this.abortController = null;
         this.currentTypingEl = null;
+        this.micPermissionGranted = false;  // track runtime mic permission
 
         // Persistent Audio Element for Cloud TTS
         this.audioElement = new Audio();
@@ -334,13 +335,46 @@ class NavisApp {
         };
     }
 
+    /* ── Runtime Mic Permission (Android WebView requires getUserMedia first) ── */
+    requestMicPermission() {
+        return new Promise((resolve) => {
+            if (this.micPermissionGranted) { resolve(true); return; }
+
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                // Older WebView — just try directly
+                this.micPermissionGranted = true;
+                resolve(true);
+                return;
+            }
+
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    // Permission granted — immediately release the stream
+                    stream.getTracks().forEach(t => t.stop());
+                    this.micPermissionGranted = true;
+                    console.log('Mic permission granted');
+                    resolve(true);
+                })
+                .catch(err => {
+                    console.error('Mic permission denied:', err);
+                    this.toast('Microphone permission denied. Please allow it in Settings.', 'error');
+                    resolve(false);
+                });
+        });
+    }
+
     startRecording() {
         if (!this.recognition) { this.toast('Voice not supported in this browser', 'error'); return; }
         if (this.isRecording) return;
-        this.isRecording = true;
-        this.els.voiceBtn.classList.add('recording');
-        this.els.userInput.placeholder = 'Listening...';
-        try { this.recognition.start(); } catch (e) { }
+
+        // Android WebView: request mic permission first, then start
+        this.requestMicPermission().then(granted => {
+            if (!granted) return;
+            this.isRecording = true;
+            this.els.voiceBtn.classList.add('recording');
+            this.els.userInput.placeholder = 'Listening...';
+            try { this.recognition.start(); } catch (e) { console.error('recognition.start error:', e); }
+        });
     }
 
     stopRecording() {
