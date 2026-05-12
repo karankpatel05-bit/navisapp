@@ -14,7 +14,9 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Navis">
     <meta name="theme-color" content="#080b1a">
-    <link rel="apple-touch-icon" href="images/robomanthan_logo.png">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" sizes="192x192" href="images/icon-192.png">
+    <link rel="apple-touch-icon" sizes="512x512" href="images/icon-512.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Orbitron:wght@500;600;700;800&display=swap" rel="stylesheet">
@@ -45,14 +47,14 @@
                 <label for="esp-ip">ESP32 IP Address</label>
                 <input type="text" id="esp-ip" placeholder="e.g. 192.168.1.100">
             </div>
-
-            <div class="form-group">
-                <label for="llm-url">Navis LLM API URL (Optional)</label>
-                <input type="text" id="llm-url" placeholder="http://127.0.0.1:5000/api/chat">
+            <div class="form-group" style="margin-top:12px;">
+                <label for="groq-key" style="font-size:0.85rem;">Groq API Key</label>
+                <input type="password" id="groq-key" placeholder="gsk_..." style="font-family:monospace;font-size:0.85rem;">
             </div>
             
             <button id="connect-btn" class="btn-primary">Connect System</button>
-            <div id="connection-status" class="status-text">Ready to connect</div>
+            <button id="skip-btn" class="btn-secondary" style="margin-top: 10px; width: 100%; padding: 12px; background: transparent; border: 1px solid var(--accent); color: var(--accent); border-radius: 8px; font-weight: 600; cursor: pointer;">Skip ESP32 (Chat Only)</button>
+            <div id="connection-status" class="status-text" style="margin-top: 15px;">Ready to connect</div>
         </div>
     </div>
 
@@ -187,6 +189,16 @@
     <div class="toast-container" id="toastContainer"></div>
 
     <script src="app.js"></script>
+    <script>
+      // Register Service Worker for PWA
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('SW registered:', reg.scope))
+            .catch(err => console.warn('SW registration failed:', err));
+        });
+      }
+    </script>
 </body>
 
 </html>

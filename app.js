@@ -1,6 +1,36 @@
 /* ═══════════════════════════════════════════════════════════
-   NAVIS AI – Unified ESP32 Controller & Chatbot
+   NAVIS AI – Fully Serverless Edition (Direct Groq + ESP32)
    ═══════════════════════════════════════════════════════════ */
+
+const SYSTEM_PROMPT = `You are Navis, an advanced AI assistant developed by Robo Manthan.
+
+Your personality:
+- Professional yet friendly and approachable
+- Knowledgeable across a wide range of topics
+- Clear, concise, and helpful
+- Proud of being created by the Robo Manthan team
+
+About you:
+- Name: Navis
+- Created by: Rahul and the Robo Manthan team
+- Capabilities: Text & voice Q&A. You understand English, Hindi, and Kannada.
+
+About Robo Manthan (Robomanthan Pvt. Ltd.):
+- An Indian robotech company specializing in robotics, AI, machine learning, and embedded product development
+- CEO: Saurav Kumar | CTO: Tanuj Kashyap
+- Incubated at IIT Patna, headquartered in Bengaluru (BTM 2nd Stage)
+- Incorporated: January 8, 2021
+- Motto: 'आपके उन्नति का साथी' (Your partner in progress)
+- Products: Humanoid robots, autonomous systems, smart wheelchairs, educational robotics kits
+- Services: STEM education, workshops, internships, ATAL Tinkering Labs, 50+ college MoUs
+
+Keep responses concise but thorough. Use markdown formatting when helpful. Your answers will be spoken aloud, so keep them conversational.`;
+
+const LANG_INSTRUCTIONS = {
+    'hi-IN': '[RESPOND IN HINDI using Devanagari script (हिन्दी). Keep it conversational and natural.]',
+    'kn-IN': '[RESPOND IN KANNADA using Kannada script (ಕನ್ನಡ). Keep it conversational and natural.]',
+    'en-IN': '',
+};
 
 class NavisApp {
     constructor() {
@@ -29,10 +59,11 @@ class NavisApp {
             // Connection UI Elements
             connectionOverlay: document.getElementById('connection-overlay'),
             espIpInput: document.getElementById('esp-ip'),
-            llmUrlInput: document.getElementById('llm-url'),
             connectBtn: document.getElementById('connect-btn'),
+            skipBtn: document.getElementById('skip-btn'),
             disconnectBtn: document.getElementById('disconnect-btn'),
             connectionStatus: document.getElementById('connection-status'),
+            groqKeyInput: document.getElementById('groq-key'),
             
             // Test buttons
             testEyesBtn: document.getElementById('test-eyes-btn'),
@@ -50,6 +81,10 @@ class NavisApp {
         this.abortController = null;
         this.currentTypingEl = null;
 
+        // Persistent Audio Element for Cloud TTS
+        this.audioElement = new Audio();
+        this.audioUnlocked = false;
+
         // Hardware State
         this.ws = null;
         this.isConnected = false;
@@ -57,7 +92,10 @@ class NavisApp {
             eyes: 1, // 1 = open, 0 = closed
             speaking: 0 // 1 = speaking, 0 = idle
         };
-        this.llmUrl = 'http://127.0.0.1:5000/api/chat';
+        
+        // Serverless Groq State
+        this.groqKey = localStorage.getItem('groq_api_key') || '';
+        this.conversationHistory = [];
 
         this.init();
     }
@@ -67,7 +105,6 @@ class NavisApp {
         this.initSpeechRecognition();
         this.initTTS();
         this.bindEvents();
-        // Load training data will happen after LLM URL is confirmed or lazily
         this.autoResize();
         
         if (this.els.ttsToggle) this.els.ttsToggle.classList.add('active');
@@ -80,8 +117,17 @@ class NavisApp {
         const savedIP = localStorage.getItem('esp32_ip');
         if (savedIP) this.els.espIpInput.value = savedIP;
 
-        const savedLLM = localStorage.getItem('llm_url');
-        if (savedLLM) this.els.llmUrlInput.value = savedLLM;
+        const savedKey = localStorage.getItem('groq_api_key');
+        if (savedKey && this.els.groqKeyInput) this.els.groqKeyInput.value = savedKey;
+    }
+
+    saveGroqKey() {
+        if (!this.els.groqKeyInput) return;
+        const key = this.els.groqKeyInput.value.trim();
+        if (key) {
+            this.groqKey = key;
+            localStorage.setItem('groq_api_key', key);
+        }
     }
 
     /* ── WebSocket Connection ────────────────────────────── */
@@ -104,13 +150,8 @@ class NavisApp {
         }
         ip = `ws://${ip}`;
 
-        let llm = this.els.llmUrlInput.value.trim();
-        if (llm) {
-            this.llmUrl = llm;
-            localStorage.setItem('llm_url', llm);
-        }
-
         localStorage.setItem('esp32_ip', this.els.espIpInput.value.trim());
+        this.saveGroqKey();
         
         this.els.connectionStatus.textContent = 'Connecting...';
         this.els.connectionStatus.className = 'status-text';
@@ -151,6 +192,29 @@ class NavisApp {
                 this.showConnectionError('Invalid IP address format.');
             }
             console.error(e);
+        }
+    }
+
+    skipESP32() {
+        this.saveGroqKey();
+        this.isConnected = false;
+        
+        // Transition UI
+        this.els.connectionOverlay.classList.add('hidden');
+        this.els.appContainer.style.display = 'flex';
+        // Trigger reflow
+        void this.els.appContainer.offsetWidth;
+        this.els.appContainer.style.opacity = '1';
+        
+        this.toast('Direct Chat Mode Active', 'success');
+        this.loadTrainingData();
+        
+        // Update welcome UI
+        if (this.els.welcomeHero) {
+            const title = this.els.welcomeHero.querySelector('.welcome-title');
+            const sub = this.els.welcomeHero.querySelector('.welcome-sub');
+            if (title) title.innerHTML = 'Direct Chat <span class="accent">Active</span>';
+            if (sub) sub.textContent = 'Hardware link skipped. Ready for direct chat and voice processing.';
         }
     }
 
@@ -207,15 +271,16 @@ class NavisApp {
         this.toast(this.hardwareState.eyes === 1 ? 'Eyes Opened' : 'Eyes Closed', 'info');
     }
 
-    /* ── TTS Init (cross-platform voice loading) ────────── */
+    /* ── TTS Init ────────── */
     initTTS() {
-        if (!window.speechSynthesis) return;
-        const loadVoices = () => {
-            this.voices = window.speechSynthesis.getVoices();
-            if (this.voices.length) this.voicesLoaded = true;
-        };
-        loadVoices();
-        window.speechSynthesis.onvoiceschanged = loadVoices;
+        // Pre-load voices for Web Speech API (async on some Android versions)
+        if (window.speechSynthesis) {
+            window.speechSynthesis.getVoices();
+            window.speechSynthesis.onvoiceschanged = () => {
+                this.voicesLoaded = true;
+                console.log('TTS voices loaded:', window.speechSynthesis.getVoices().length);
+            };
+        }
     }
 
     /* ── Speech Recognition ─────────────────────────────── */
@@ -283,7 +348,7 @@ class NavisApp {
         try { this.recognition.stop(); } catch (e) { }
     }
 
-    /* ── Text-to-Speech (always on, cross-platform) ────── */
+    /* ── Text-to-Speech (Web Speech API primary, Google TTS fallback) ── */
     getSelectedLang() {
         const langSelect = document.getElementById('langSelect');
         return langSelect ? langSelect.value : 'en-IN';
@@ -297,15 +362,9 @@ class NavisApp {
         return 'en-IN';
     }
 
-    speak(text, langHint) {
-        if (!this.ttsEnabled || !window.speechSynthesis) {
-            this.onSpeechDone();
-            return;
-        }
-        window.speechSynthesis.cancel();
-        
-        const clean = text
-            .replace(/```[\s\S]*?```/g, ' code block ')
+    cleanTextForSpeech(text) {
+        return text
+            .replace(/```[\s\S]*?```/g, ' ')
             .replace(/`([^`]+)`/g, '$1')
             .replace(/#{1,6}\s*/g, '')
             .replace(/[*_~]{1,3}/g, '')
@@ -314,87 +373,140 @@ class NavisApp {
             .replace(/\n+/g, '. ')
             .replace(/\.\s*\./g, '.')
             .trim();
+    }
 
+    speak(text, langHint) {
+        if (!this.ttsEnabled) {
+            this.onSpeechDone();
+            return;
+        }
+
+        const clean = this.cleanTextForSpeech(text);
         if (!clean) { this.onSpeechDone(); return; }
 
         this.isSpeaking = true;
         this.speechStopped = false;
         this.showStopBtn();
-        
-        // Signal ESP32: mouth OPEN
         this.setMouthState(1);
 
-        const utt = new SpeechSynthesisUtterance(clean);
-        utt.rate = 0.95;
-        utt.pitch = 1;
-
         const detectedLang = this.detectLanguage(clean);
-        const lang = langHint || detectedLang || this.getSelectedLang();
-        const isHindi = lang.startsWith('hi');
-        const isKannada = lang.startsWith('kn');
+        const langCode = langHint || detectedLang || this.getSelectedLang();
 
-        const voices = this.voices || window.speechSynthesis.getVoices();
-        const isFemale = (v) => /Female|Samantha|Zira|Veena|Heera|Neerja|Victoria|Karen|Moira|Tessa|Luciana|Monica|Lekha|Flo|Grandma|Kathy/i.test(v.name);
-
-        let preferred;
-        if (isHindi) {
-            preferred = voices.find(v => v.name.includes('Google हिन्दी'))
-                || voices.find(v => v.name.includes('Microsoft Hemant'))
-                || voices.find(v => v.lang.startsWith('hi') && !isFemale(v))
-                || voices.find(v => v.lang.startsWith('hi'))
-                || voices.find(v => v.name.includes('Rishi'))
-                || voices[0];
-            utt.lang = 'hi-IN';
-        } else if (isKannada) {
-            preferred = voices.find(v => v.name.includes('Soumya'))
-                || voices.find(v => v.lang.startsWith('kn'))
-                || voices[0];
-            utt.lang = 'kn-IN';
+        // ── Primary: Web Speech API (built-in Android WebView, no network needed) ──
+        if (window.speechSynthesis) {
+            this.speakWithWebSpeech(clean, langCode);
         } else {
-            preferred = voices.find(v => v.name === 'Rishi')
-                || voices.find(v => v.name === 'Ravi')
-                || voices.find(v => v.name === 'Microsoft Ravi')
-                || voices.find(v => v.name === 'Google UK English Male')
-                || voices.find(v => v.name === 'Daniel')
-                || voices.find(v => v.lang === 'en-IN' && !isFemale(v))
-                || voices.find(v => v.lang.startsWith('en') && !isFemale(v))
-                || voices[0];
-            utt.lang = 'en-IN';
-        }
-
-        if (preferred) utt.voice = preferred;
-
-        if (clean.length > 200) {
-            this.speakChunked(clean, utt.rate, utt.pitch, preferred, utt.lang);
-        } else {
-            utt.onend = () => this.onSpeechDone();
-            utt.onerror = () => this.onSpeechDone();
-            window.speechSynthesis.speak(utt);
+            // ── Fallback: Google Translate TTS (requires network) ──
+            console.warn('speechSynthesis not available, falling back to Google TTS');
+            let gtLang = langCode;
+            if (gtLang.startsWith('hi')) gtLang = 'hi';
+            else if (gtLang.startsWith('kn')) gtLang = 'kn';
+            else gtLang = 'en';
+            const sentences = clean.match(/[^.!?]+[.!?]+/g) || [clean];
+            let chunks = [];
+            sentences.forEach(s => {
+                if (s.length <= 150) {
+                    chunks.push(s);
+                } else {
+                    let words = s.split(' '), currentChunk = '';
+                    words.forEach(w => {
+                        if ((currentChunk + w).length < 150) { currentChunk += w + ' '; }
+                        else { chunks.push(currentChunk.trim()); currentChunk = w + ' '; }
+                    });
+                    if (currentChunk.trim()) chunks.push(currentChunk.trim());
+                }
+            });
+            this.playCloudAudioChunks(chunks, gtLang);
         }
     }
 
-    speakChunked(text, rate, pitch, voice, lang) {
-        const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
-        let i = 0;
-        const speakNext = () => {
-            if (this.speechStopped || i >= sentences.length) { this.onSpeechDone(); return; }
-            const utt = new SpeechSynthesisUtterance(sentences[i].trim());
-            utt.rate = rate;
-            utt.pitch = pitch;
-            if (voice) utt.voice = voice;
-            if (lang) utt.lang = lang;
-            utt.onend = () => { i++; speakNext(); };
-            utt.onerror = () => { i++; speakNext(); };
-            window.speechSynthesis.speak(utt);
+    speakWithWebSpeech(text, langCode) {
+        // Cancel any ongoing speech
+        window.speechSynthesis.cancel();
+
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = langCode;   // e.g. 'hi-IN', 'kn-IN', 'en-IN'
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+        utterance.volume = 1.0;
+
+        // Try to pick a matching voice
+        const voices = window.speechSynthesis.getVoices();
+        if (voices.length > 0) {
+            const match = voices.find(v => v.lang.startsWith(langCode.split('-')[0]))
+                       || voices.find(v => v.lang.startsWith('en'))
+                       || voices[0];
+            if (match) utterance.voice = match;
+        }
+
+        utterance.onend = () => {
+            if (!this.speechStopped) this.onSpeechDone();
         };
-        speakNext();
+
+        utterance.onerror = (e) => {
+            console.error('Web Speech API error:', e.error);
+            // If interrupted intentionally, don't treat as failure
+            if (e.error === 'interrupted' || e.error === 'canceled') return;
+            // Fallback to Google TTS on error
+            this.toast('Native TTS error, trying fallback...', 'info');
+            let gtLang = langCode.startsWith('hi') ? 'hi' : langCode.startsWith('kn') ? 'kn' : 'en';
+            const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+            let chunks = [];
+            sentences.forEach(s => {
+                if (s.length <= 150) chunks.push(s);
+                else {
+                    let words = s.split(' '), cur = '';
+                    words.forEach(w => { if ((cur + w).length < 150) cur += w + ' '; else { chunks.push(cur.trim()); cur = w + ' '; } });
+                    if (cur.trim()) chunks.push(cur.trim());
+                }
+            });
+            this.playCloudAudioChunks(chunks, gtLang);
+        };
+
+        // Android WebView bug: speechSynthesis pauses after ~14s. Kick it periodically.
+        this._ttsKicker = setInterval(() => {
+            if (!this.isSpeaking) { clearInterval(this._ttsKicker); return; }
+            if (window.speechSynthesis.speaking && window.speechSynthesis.paused) {
+                window.speechSynthesis.resume();
+            }
+        }, 5000);
+
+        window.speechSynthesis.speak(utterance);
+    }
+
+    playCloudAudioChunks(chunks, lang) {
+        let i = 0;
+        const playNext = () => {
+            if (this.speechStopped || i >= chunks.length) {
+                this.onSpeechDone();
+                return;
+            }
+            const chunk = chunks[i].trim();
+            if (!chunk) { i++; playNext(); return; }
+
+            const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(chunk)}`;
+            this.audioElement.src = url;
+            this.audioElement.onended = () => { i++; playNext(); };
+            this.audioElement.onerror = (e) => {
+                console.error('Cloud TTS Error:', chunk, e);
+                i++;
+                playNext();
+            };
+            this.audioElement.play().catch(e => {
+                console.error('Audio playback blocked', e);
+                this.onSpeechDone();
+            });
+        };
+        playNext();
     }
 
     onSpeechDone() {
         this.isSpeaking = false;
+        // Clear Android TTS kicker interval
+        if (this._ttsKicker) { clearInterval(this._ttsKicker); this._ttsKicker = null; }
         // Signal ESP32: mouth CLOSE
         this.setMouthState(0);
-        
+
         if (!this.isProcessing) {
             this.showSendBtn();
             if (this.continuousListening) {
@@ -419,17 +531,27 @@ class NavisApp {
 
     /* ── Events ─────────────────────────────────────────── */
     bindEvents() {
+        const unlockAudio = () => {
+            if (!this.audioUnlocked) {
+                // Play a silent 1-second WAV to unlock the audio context on user interaction
+                this.audioElement.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+                this.audioElement.play().catch(()=>{});
+                this.audioUnlocked = true;
+            }
+        };
+
         // Connection Events
-        this.els.connectBtn.addEventListener('click', () => this.connectESP32());
+        this.els.connectBtn.addEventListener('click', () => { unlockAudio(); this.connectESP32(); });
+        if (this.els.skipBtn) this.els.skipBtn.addEventListener('click', () => { unlockAudio(); this.skipESP32(); });
         this.els.disconnectBtn.addEventListener('click', () => this.disconnectESP32());
         this.els.espIpInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') this.connectESP32();
+            if (e.key === 'Enter') { unlockAudio(); this.connectESP32(); }
         });
 
         // Chat Events
-        this.els.sendBtn.addEventListener('click', () => this.sendMessage());
+        this.els.sendBtn.addEventListener('click', () => { unlockAudio(); this.sendMessage(); });
         this.els.userInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.sendMessage(); }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); unlockAudio(); this.sendMessage(); }
         });
 
         // Stop
@@ -440,6 +562,7 @@ class NavisApp {
 
         // Voice
         this.els.voiceBtn.addEventListener('click', () => {
+            unlockAudio();
             if (this.continuousListening) {
                 this.continuousListening = false;
                 this.stopRecording();
@@ -455,7 +578,9 @@ class NavisApp {
         this.els.ttsToggle.addEventListener('click', () => {
             this.ttsEnabled = !this.ttsEnabled;
             this.els.ttsToggle.classList.toggle('active', this.ttsEnabled);
-            if (!this.ttsEnabled) window.speechSynthesis?.cancel();
+            if (!this.ttsEnabled && this.audioElement) {
+                this.audioElement.pause();
+            }
             this.toast(this.ttsEnabled ? 'Voice replies ON' : 'Voice replies OFF', 'info');
         });
 
@@ -493,11 +618,38 @@ class NavisApp {
         ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
     }
 
-    /* ── Chat ───────────────────────────────────────────── */
-    getApiUrl(endpoint) {
-        // Build URL ensuring no double slashes
-        const base = this.llmUrl.replace(/\/api\/chat\/?$/, '').replace(/\/$/, '');
-        return `${base}${endpoint}`;
+    /* ── Direct Serverless Chat ─────────────────────────── */
+    getSimilarity(str1, str2) {
+        const s1 = str1.toLowerCase().trim();
+        const s2 = str2.toLowerCase().trim();
+        if (s1 === s2) return 1.0;
+        
+        const words1 = new Set(s1.split(/\s+/));
+        const words2 = new Set(s2.split(/\s+/));
+        let intersection = 0;
+        for (const w of words1) if (words2.has(w)) intersection++;
+        
+        return intersection / Math.max(words1.size, words2.size, 1);
+    }
+
+    findMatchingTraining(question) {
+        const data = JSON.parse(localStorage.getItem('navis_training') || '[]');
+        let bestMatch = null;
+        let bestScore = 0;
+
+        for (const qa of data) {
+            const score = this.getSimilarity(question, qa.question);
+            if (score > bestScore) {
+                bestScore = score;
+                bestMatch = qa;
+            }
+        }
+
+        // Threshold of 0.6 matches the Python logic roughly
+        if (bestScore > 0.6 && bestMatch) {
+            return bestMatch.answer;
+        }
+        return null;
     }
 
     async sendMessage() {
@@ -520,27 +672,67 @@ class NavisApp {
         this.currentTypingEl = this.showTyping();
 
         try {
-            const res = await fetch(this.llmUrl, {
+            // 1. Check local training data
+            const trainedAnswer = this.findMatchingTraining(text);
+            if (trainedAnswer) {
+                if (this.currentTypingEl) this.currentTypingEl.remove();
+                this.addMessage(trainedAnswer, 'navis', '🎓 Trained');
+                this.isProcessing = false;
+                this.speak(trainedAnswer, selectedLang);
+                return;
+            }
+
+            // 2. Call Groq API Directly
+            const langInstruction = LANG_INSTRUCTIONS[selectedLang] || '';
+            const fullMessage = langInstruction ? `${langInstruction}\n${text}` : text;
+
+            this.conversationHistory.push({ role: 'user', content: fullMessage });
+
+            // Prepare API messages
+            const apiMessages = [
+                { role: 'system', content: SYSTEM_PROMPT },
+                ...this.conversationHistory
+            ];
+
+            const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: text, lang: selectedLang }),
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.groqKey}`
+                },
+                body: JSON.stringify({
+                    model: 'llama-3.3-70b-versatile',
+                    messages: apiMessages,
+                    temperature: 0.7,
+                    max_tokens: 2048
+                }),
                 signal: this.abortController.signal
             });
             
-            if (!res.ok) throw new Error('API Error');
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.error?.message || 'API Error');
+            }
             
             const data = await res.json();
             if (this.currentTypingEl) this.currentTypingEl.remove();
 
-            const sourceLabel = data.source === 'trained' ? '🎓 Trained' : data.source === 'ai' ? '✨ AI' : '';
-            this.addMessage(data.response, 'navis', sourceLabel);
+            const responseText = data.choices[0].message.content;
+            this.conversationHistory.push({ role: 'assistant', content: responseText });
+
+            // Keep memory manageable
+            if (this.conversationHistory.length > 40) {
+                this.conversationHistory = this.conversationHistory.slice(-40);
+            }
+
+            this.addMessage(responseText, 'navis', '✨ AI');
             this.isProcessing = false;
             
-            this.speak(data.response, data.lang || selectedLang);
+            this.speak(responseText, selectedLang);
         } catch (err) {
             if (this.currentTypingEl) this.currentTypingEl.remove();
             if (err.name !== 'AbortError') {
-                this.addMessage('Sorry, I couldn\'t process that. Check if the LLM backend is running and CORS is enabled.', 'navis', '⚠️ Error');
+                this.addMessage(`Sorry, I encountered an error: ${err.message}`, 'navis', '⚠️ Error');
             }
             this.isProcessing = false;
             this.showSendBtn();
@@ -560,16 +752,16 @@ class NavisApp {
         this.speechStopped = true;
         this.setMouthState(0);
 
+        // Stop Web Speech API
         if (window.speechSynthesis) {
             window.speechSynthesis.cancel();
-            window.speechSynthesis.pause();
-            window.speechSynthesis.resume();
-            window.speechSynthesis.cancel();
-            setTimeout(() => {
-                if (window.speechSynthesis.speaking) {
-                    window.speechSynthesis.cancel();
-                }
-            }, 100);
+        }
+        if (this._ttsKicker) { clearInterval(this._ttsKicker); this._ttsKicker = null; }
+
+        // Stop fallback audio element
+        if (this.audioElement) {
+            this.audioElement.pause();
+            this.audioElement.src = '';
         }
 
         if (this.currentTypingEl) {
@@ -641,8 +833,8 @@ class NavisApp {
         this.els.chatContainer.scrollTop = this.els.chatContainer.scrollHeight;
     }
 
-    async resetChat() {
-        try { await fetch(this.getApiUrl('/api/reset'), { method: 'POST' }); } catch (e) { }
+    resetChat() {
+        this.conversationHistory = [];
         this.els.messages.innerHTML = '';
         if (this.els.welcomeHero) {
             this.els.messages.appendChild(this.els.welcomeHero);
@@ -651,7 +843,7 @@ class NavisApp {
         this.toast('Chat reset', 'info');
     }
 
-    /* ── Training Panel ─────────────────────────────────── */
+    /* ── Local Training Panel ───────────────────────────── */
     openTraining() {
         this.els.trainingPanel.classList.add('open');
         this.els.overlay.classList.add('active');
@@ -663,15 +855,9 @@ class NavisApp {
         this.els.overlay.classList.remove('active');
     }
 
-    async loadTrainingData() {
-        try {
-            const res = await fetch(this.getApiUrl('/api/training-data'));
-            if (!res.ok) throw new Error('API Error');
-            const data = await res.json();
-            this.renderTrainingList(data.qa_pairs || []);
-        } catch (e) {
-            this.els.trainingList.innerHTML = '<p class="training-empty" style="color:var(--text-3);text-align:center;">Could not load data from LLM backend</p>';
-        }
+    loadTrainingData() {
+        const data = JSON.parse(localStorage.getItem('navis_training') || '[]');
+        this.renderTrainingList(data);
     }
 
     renderTrainingList(pairs) {
@@ -692,32 +878,28 @@ class NavisApp {
         });
     }
 
-    async addTrainingData() {
+    addTrainingData() {
         const q = this.els.trainQuestion.value.trim();
         const a = this.els.trainAnswer.value.trim();
         if (!q || !a) { this.toast('Fill in both fields', 'error'); return; }
 
-        try {
-            const res = await fetch(this.getApiUrl('/api/train'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ question: q, answer: a })
-            });
-            if (res.ok) {
-                this.els.trainQuestion.value = '';
-                this.els.trainAnswer.value = '';
-                this.toast('Training added!', 'success');
-                this.loadTrainingData();
-            }
-        } catch (e) { this.toast('Failed to add. Check backend.', 'error'); }
+        const data = JSON.parse(localStorage.getItem('navis_training') || '[]');
+        data.push({ id: Date.now(), question: q, answer: a });
+        localStorage.setItem('navis_training', JSON.stringify(data));
+        
+        this.els.trainQuestion.value = '';
+        this.els.trainAnswer.value = '';
+        this.toast('Training saved to phone!', 'success');
+        this.loadTrainingData();
     }
 
-    async deleteTraining(id) {
-        try {
-            await fetch(this.getApiUrl(`/api/training-data/${id}`), { method: 'DELETE' });
-            this.toast('Removed', 'info');
-            this.loadTrainingData();
-        } catch (e) { }
+    deleteTraining(id) {
+        let data = JSON.parse(localStorage.getItem('navis_training') || '[]');
+        data = data.filter(qa => qa.id != id);
+        localStorage.setItem('navis_training', JSON.stringify(data));
+        
+        this.toast('Removed', 'info');
+        this.loadTrainingData();
     }
 
     /* ── Utilities ──────────────────────────────────────── */
@@ -730,7 +912,6 @@ class NavisApp {
     toast(msg, type = 'info') {
         const t = document.createElement('div');
         t.className = `toast ${type}`;
-        // Simple inline styles for toast since we might not have all navis CSS ported perfectly
         Object.assign(t.style, {
             padding: '12px 20px',
             background: type === 'error' ? '#ef4444' : type === 'success' ? '#34d399' : '#f7931e',
@@ -742,7 +923,6 @@ class NavisApp {
         });
         t.textContent = msg;
         this.els.toastContainer.appendChild(t);
-        // Ensure container is styled and positioned
         Object.assign(this.els.toastContainer.style, {
             position: 'fixed',
             bottom: '20px',
