@@ -44,6 +44,7 @@ jobs:
       # 5. Generate app icons from the logo
       - name: Generate app icons
         run: |
+          pip3 install Pillow
           python3 - <<'EOF'
           from PIL import Image
           import os
