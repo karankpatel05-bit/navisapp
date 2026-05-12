@@ -187,7 +187,10 @@ class NavisApp {
             };
         } catch (e) {
             if (e.name === 'SecurityError') {
-                this.showConnectionError('HTTPS Security Error: Cannot connect to insecure ESP32 (ws://). Try downloading the HTML file and opening it locally.');
+                // HTTPS blocks ws:// — auto fall back to chat-only mode
+                console.warn('HTTPS blocks ws://, switching to chat-only mode');
+                this.toast('⚠️ HTTPS blocks ESP32 ws:// — switching to Chat Only mode', 'info');
+                setTimeout(() => this.skipESP32(), 1200);
             } else {
                 this.showConnectionError('Invalid IP address format.');
             }
