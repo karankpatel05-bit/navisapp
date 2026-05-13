@@ -81,6 +81,8 @@ class NavisApp {
         this.abortController = null;
         this.currentTypingEl = null;
         this.micPermissionGranted = false;  // track runtime mic permission
+        this._ttsKicker = null;             // Android 14s TTS kicker
+        this._jawKeepalive = null;          // keeps mouth open while speaking
 
         // Persistent Audio Element for Cloud TTS
         this.audioElement = new Audio();
@@ -425,6 +427,7 @@ class NavisApp {
         this.speechStopped = false;
         this.showStopBtn();
         this.setMouthState(1);
+        this.startJawKeepalive();   // keep jaw open throughout speech
 
         const detectedLang = this.detectLanguage(clean);
         const langCode = langHint || detectedLang || this.getSelectedLang();
@@ -462,7 +465,7 @@ class NavisApp {
         window.speechSynthesis.cancel();
 
         const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = langCode;   // e.g. 'hi-IN', 'kn-IN', 'en-IN'
+        utterance.lang = langCode;
         utterance.rate = 1.0;
         utterance.pitch = 1.0;
         utterance.volume = 1.0;
@@ -477,12 +480,20 @@ class NavisApp {
         }
 
         utterance.onend = () => {
-            if (!this.speechStopped) this.onSpeechDone();
+            if (this.speechStopped) return;
+            // Android bug: onend can fire while audio is still draining through the speaker.
+            // Wait 300ms and confirm speechSynthesis is truly finished before closing jaw.
+            setTimeout(() => {
+                if (this.speechStopped) return;
+                if (!window.speechSynthesis.speaking) {
+                    this.onSpeechDone();
+                }
+                // If still speaking, the next onend will trigger this again
+            }, 300);
         };
 
         utterance.onerror = (e) => {
             console.error('Web Speech API error:', e.error);
-            // If interrupted intentionally, don't treat as failure
             if (e.error === 'interrupted' || e.error === 'canceled') return;
             // Fallback to Google TTS on error
             this.toast('Native TTS error, trying fallback...', 'info');
@@ -497,18 +508,39 @@ class NavisApp {
                     if (cur.trim()) chunks.push(cur.trim());
                 }
             });
+            this.stopJawKeepalive();
             this.playCloudAudioChunks(chunks, gtLang);
         };
 
         // Android WebView bug: speechSynthesis pauses after ~14s. Kick it periodically.
         this._ttsKicker = setInterval(() => {
-            if (!this.isSpeaking) { clearInterval(this._ttsKicker); return; }
+            if (!this.isSpeaking) { clearInterval(this._ttsKicker); this._ttsKicker = null; return; }
             if (window.speechSynthesis.speaking && window.speechSynthesis.paused) {
                 window.speechSynthesis.resume();
             }
         }, 5000);
 
         window.speechSynthesis.speak(utterance);
+    }
+
+    // ── Jaw Keepalive: re-sends mouth=open every 400ms while speaking ──────
+    // Prevents a single dropped WebSocket packet from permanently closing the jaw.
+    startJawKeepalive() {
+        this.stopJawKeepalive(); // clear any existing one
+        this._jawKeepalive = setInterval(() => {
+            if (!this.isSpeaking || this.speechStopped) {
+                this.stopJawKeepalive();
+                return;
+            }
+            this.setMouthState(1); // re-confirm mouth is open
+        }, 400);
+    }
+
+    stopJawKeepalive() {
+        if (this._jawKeepalive) {
+            clearInterval(this._jawKeepalive);
+            this._jawKeepalive = null;
+        }
     }
 
     playCloudAudioChunks(chunks, lang) {
@@ -539,8 +571,9 @@ class NavisApp {
 
     onSpeechDone() {
         this.isSpeaking = false;
-        // Clear Android TTS kicker interval
+        // Stop all keepalive intervals
         if (this._ttsKicker) { clearInterval(this._ttsKicker); this._ttsKicker = null; }
+        this.stopJawKeepalive();
         // Signal ESP32: mouth CLOSE
         this.setMouthState(0);
 
