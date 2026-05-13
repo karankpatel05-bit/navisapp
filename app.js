@@ -466,7 +466,7 @@ class NavisApp {
 
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = langCode;
-        utterance.rate = 1.2;   // slightly faster than default
+        utterance.rate = 1.2;
         utterance.pitch = 1.0;
         utterance.volume = 1.0;
 
@@ -479,34 +479,40 @@ class NavisApp {
             if (match) utterance.voice = match;
         }
 
-        // Track when speech actually starts so polling doesn't fire prematurely
-        let speechStarted = false;
-        let silentCount = 0;
+        // ── Estimate speech duration ──────────────────────────────────────
+        // English at rate 1.2: ~14 chars/sec. Hindi/Kannada: ~10 chars/sec.
+        // This lets us hold the jaw open for the ENTIRE speech duration,
+        // ignoring pauses between sentences completely.
+        const isIndic = langCode.startsWith('hi') || langCode.startsWith('kn');
+        const charsPerSec = isIndic ? 10 : 14;
+        const estimatedMs = Math.max(1500, (text.length / charsPerSec) * 1000);
+        console.log(`TTS: ${text.length} chars, estimated ${estimatedMs}ms`);
 
-        utterance.onstart = () => {
-            speechStarted = true;
-            silentCount = 0;
-            console.log('TTS started');
+        let durationTimer = null;
+        const scheduleDone = (delay) => {
+            if (durationTimer) clearTimeout(durationTimer);
+            durationTimer = setTimeout(() => {
+                if (!this.speechStopped) this.onSpeechDone();
+            }, delay);
         };
 
-        // Keep onend only as a long-delay safety net backup
+        // onstart: clear any premature timer, schedule close at estimated end
+        utterance.onstart = () => {
+            console.log('TTS onstart');
+            scheduleDone(estimatedMs + 400);   // estimated duration + 400ms drain buffer
+        };
+
+        // onend: Android fired end event — wait 400ms for audio to drain, then close jaw
         utterance.onend = () => {
-            console.log('TTS onend fired');
-            // Poller handles the real close; this is just a backup after 800ms
-            if (!this.speechStopped) {
-                setTimeout(() => {
-                    if (!this.speechStopped && !window.speechSynthesis.speaking) {
-                        this.onSpeechDone();
-                    }
-                }, 800);
-            }
+            console.log('TTS onend');
+            scheduleDone(400);   // override timer: close 400ms after engine says done
         };
 
         utterance.onerror = (e) => {
-            console.error('Web Speech API error:', e.error);
+            console.error('TTS error:', e.error);
+            if (durationTimer) { clearTimeout(durationTimer); durationTimer = null; }
             if (e.error === 'interrupted' || e.error === 'canceled') return;
             this.toast('Native TTS error, trying fallback...', 'info');
-            this.stopSpeechPoller();
             this.stopJawKeepalive();
             let gtLang = langCode.startsWith('hi') ? 'hi' : langCode.startsWith('kn') ? 'kn' : 'en';
             const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
@@ -522,7 +528,7 @@ class NavisApp {
             this.playCloudAudioChunks(chunks, gtLang);
         };
 
-        // ── Android 14s pause bug kicker ──────────────────────────────────
+        // Android 14s pause bug kicker
         this._ttsKicker = setInterval(() => {
             if (!this.isSpeaking) { clearInterval(this._ttsKicker); this._ttsKicker = null; return; }
             if (window.speechSynthesis.speaking && window.speechSynthesis.paused) {
@@ -531,33 +537,15 @@ class NavisApp {
             }
         }, 5000);
 
-        // ── Primary end-detection: poll speechSynthesis.speaking ──────────
-        // Threshold is 8 checks (2.4s) so natural full-stop/comma pauses
-        // between sentences don't prematurely close the jaw.
-        this._speechPoller = setInterval(() => {
-            if (!this.isSpeaking || this.speechStopped) {
-                this.stopSpeechPoller();
-                return;
-            }
-            if (!speechStarted) return;
-
-            if (!window.speechSynthesis.speaking) {
-                silentCount++;
-                console.log('TTS silent count:', silentCount);
-                if (silentCount >= 8) {   // 8 × 300ms = 2.4s of confirmed silence
-                    this.stopSpeechPoller();
-                    if (!this.speechStopped) this.onSpeechDone();
-                }
-            } else {
-                silentCount = 0;          // still speaking — reset
-            }
-        }, 300);
+        // Safety net: if onstart never fires (some Android versions), close jaw
+        // after estimated duration + 2s grace period
+        scheduleDone(estimatedMs + 2000);
 
         window.speechSynthesis.speak(utterance);
     }
 
     stopSpeechPoller() {
-        if (this._speechPoller) { clearInterval(this._speechPoller); this._speechPoller = null; }
+        // kept for compatibility (called from stopResponse)
     }
 
     // ── Jaw Keepalive: force-sends mouth=OPEN every 400ms while isSpeaking ────
@@ -612,8 +600,9 @@ class NavisApp {
     }
 
     onSpeechDone() {
+        if (!this.isSpeaking) return;    // guard: prevent double-fire
         this.isSpeaking = false;
-        if (this._ttsKicker)    { clearInterval(this._ttsKicker);    this._ttsKicker    = null; }
+        if (this._ttsKicker) { clearInterval(this._ttsKicker); this._ttsKicker = null; }
         this.stopSpeechPoller();
         this.stopJawKeepalive();
         // Signal ESP32: mouth CLOSE
