@@ -80,9 +80,10 @@ class NavisApp {
         this.voicesLoaded = false;
         this.abortController = null;
         this.currentTypingEl = null;
-        this.micPermissionGranted = false;  // track runtime mic permission
-        this._ttsKicker = null;             // Android 14s TTS kicker
-        this._jawKeepalive = null;          // keeps mouth open while speaking
+        this.micPermissionGranted = false;
+        this._ttsKicker = null;
+        this._jawKeepalive = null;
+        this._speechPoller = null;   // polls speechSynthesis.speaking to detect true end
 
         // Persistent Audio Element for Cloud TTS
         this.audioElement = new Audio();
@@ -461,7 +462,6 @@ class NavisApp {
     }
 
     speakWithWebSpeech(text, langCode) {
-        // Cancel any ongoing speech
         window.speechSynthesis.cancel();
 
         const utterance = new SpeechSynthesisUtterance(text);
@@ -470,7 +470,7 @@ class NavisApp {
         utterance.pitch = 1.0;
         utterance.volume = 1.0;
 
-        // Try to pick a matching voice
+        // Pick a matching voice
         const voices = window.speechSynthesis.getVoices();
         if (voices.length > 0) {
             const match = voices.find(v => v.lang.startsWith(langCode.split('-')[0]))
@@ -479,24 +479,35 @@ class NavisApp {
             if (match) utterance.voice = match;
         }
 
+        // Track when speech actually starts so polling doesn't fire prematurely
+        let speechStarted = false;
+        let silentCount = 0;
+
+        utterance.onstart = () => {
+            speechStarted = true;
+            silentCount = 0;
+            console.log('TTS started');
+        };
+
+        // Keep onend only as a long-delay safety net backup
         utterance.onend = () => {
-            if (this.speechStopped) return;
-            // Android bug: onend can fire while audio is still draining through the speaker.
-            // Wait 300ms and confirm speechSynthesis is truly finished before closing jaw.
-            setTimeout(() => {
-                if (this.speechStopped) return;
-                if (!window.speechSynthesis.speaking) {
-                    this.onSpeechDone();
-                }
-                // If still speaking, the next onend will trigger this again
-            }, 300);
+            console.log('TTS onend fired');
+            // Poller handles the real close; this is just a backup after 800ms
+            if (!this.speechStopped) {
+                setTimeout(() => {
+                    if (!this.speechStopped && !window.speechSynthesis.speaking) {
+                        this.onSpeechDone();
+                    }
+                }, 800);
+            }
         };
 
         utterance.onerror = (e) => {
             console.error('Web Speech API error:', e.error);
             if (e.error === 'interrupted' || e.error === 'canceled') return;
-            // Fallback to Google TTS on error
             this.toast('Native TTS error, trying fallback...', 'info');
+            this.stopSpeechPoller();
+            this.stopJawKeepalive();
             let gtLang = langCode.startsWith('hi') ? 'hi' : langCode.startsWith('kn') ? 'kn' : 'en';
             const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
             let chunks = [];
@@ -508,19 +519,45 @@ class NavisApp {
                     if (cur.trim()) chunks.push(cur.trim());
                 }
             });
-            this.stopJawKeepalive();
             this.playCloudAudioChunks(chunks, gtLang);
         };
 
-        // Android WebView bug: speechSynthesis pauses after ~14s. Kick it periodically.
+        // ── Android 14s pause bug kicker ──────────────────────────────────
         this._ttsKicker = setInterval(() => {
             if (!this.isSpeaking) { clearInterval(this._ttsKicker); this._ttsKicker = null; return; }
             if (window.speechSynthesis.speaking && window.speechSynthesis.paused) {
+                console.log('TTS paused, resuming...');
                 window.speechSynthesis.resume();
             }
         }, 5000);
 
+        // ── Primary end-detection: poll speechSynthesis.speaking ──────────
+        // Only marks done after 2 consecutive "not speaking" checks (600ms).
+        // This correctly ignores brief gaps between Android TTS chunks.
+        this._speechPoller = setInterval(() => {
+            if (!this.isSpeaking || this.speechStopped) {
+                this.stopSpeechPoller();
+                return;
+            }
+            if (!speechStarted) return; // wait until speech actually begins
+
+            if (!window.speechSynthesis.speaking) {
+                silentCount++;
+                console.log('TTS silent count:', silentCount);
+                if (silentCount >= 2) {       // 2 × 300ms = 600ms confirmed silence
+                    this.stopSpeechPoller();
+                    if (!this.speechStopped) this.onSpeechDone();
+                }
+            } else {
+                silentCount = 0;              // still speaking — reset
+            }
+        }, 300);
+
         window.speechSynthesis.speak(utterance);
+    }
+
+    stopSpeechPoller() {
+        if (this._speechPoller) { clearInterval(this._speechPoller); this._speechPoller = null; }
     }
 
     // ── Jaw Keepalive: re-sends mouth=open every 400ms while speaking ──────
@@ -571,8 +608,8 @@ class NavisApp {
 
     onSpeechDone() {
         this.isSpeaking = false;
-        // Stop all keepalive intervals
-        if (this._ttsKicker) { clearInterval(this._ttsKicker); this._ttsKicker = null; }
+        if (this._ttsKicker)    { clearInterval(this._ttsKicker);    this._ttsKicker    = null; }
+        this.stopSpeechPoller();
         this.stopJawKeepalive();
         // Signal ESP32: mouth CLOSE
         this.setMouthState(0);
@@ -822,11 +859,13 @@ class NavisApp {
         this.speechStopped = true;
         this.setMouthState(0);
 
-        // Stop Web Speech API
+        // Stop Web Speech API and all polling intervals
         if (window.speechSynthesis) {
             window.speechSynthesis.cancel();
         }
         if (this._ttsKicker) { clearInterval(this._ttsKicker); this._ttsKicker = null; }
+        this.stopSpeechPoller();
+        this.stopJawKeepalive();
 
         // Stop fallback audio element
         if (this.audioElement) {
