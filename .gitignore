@@ -1,0 +1,17 @@
+# Build artifacts
+navis_apk_build/
+navis_app.zip
+voltbuilder_navis.zip
+
+# Gradle
+gradle-*/
+android/.gradle/
+android/app/build/
+android/build/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
