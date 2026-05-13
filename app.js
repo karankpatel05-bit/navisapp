@@ -466,7 +466,7 @@ class NavisApp {
 
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = langCode;
-        utterance.rate = 1.2;
+        utterance.rate = 0.95;  // matches navis-LLM speech speed
         utterance.pitch = 1.0;
         utterance.volume = 1.0;
 
@@ -480,11 +480,11 @@ class NavisApp {
         }
 
         // ── Estimate speech duration ──────────────────────────────────────
-        // English at rate 1.2: ~14 chars/sec. Hindi/Kannada: ~10 chars/sec.
+        // English at rate 0.95: ~11 chars/sec. Hindi/Kannada: ~8 chars/sec.
         // This lets us hold the jaw open for the ENTIRE speech duration,
         // ignoring pauses between sentences completely.
         const isIndic = langCode.startsWith('hi') || langCode.startsWith('kn');
-        const charsPerSec = isIndic ? 10 : 14;
+        const charsPerSec = isIndic ? 8 : 11;
         const estimatedMs = Math.max(1500, (text.length / charsPerSec) * 1000);
         console.log(`TTS: ${text.length} chars, estimated ${estimatedMs}ms`);
 
