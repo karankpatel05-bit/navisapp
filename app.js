@@ -466,7 +466,7 @@ class NavisApp {
 
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = langCode;
-        utterance.rate = 1.0;
+        utterance.rate = 1.2;   // slightly faster than default
         utterance.pitch = 1.0;
         utterance.volume = 1.0;
 
@@ -532,24 +532,24 @@ class NavisApp {
         }, 5000);
 
         // ── Primary end-detection: poll speechSynthesis.speaking ──────────
-        // Only marks done after 2 consecutive "not speaking" checks (600ms).
-        // This correctly ignores brief gaps between Android TTS chunks.
+        // Threshold is 8 checks (2.4s) so natural full-stop/comma pauses
+        // between sentences don't prematurely close the jaw.
         this._speechPoller = setInterval(() => {
             if (!this.isSpeaking || this.speechStopped) {
                 this.stopSpeechPoller();
                 return;
             }
-            if (!speechStarted) return; // wait until speech actually begins
+            if (!speechStarted) return;
 
             if (!window.speechSynthesis.speaking) {
                 silentCount++;
                 console.log('TTS silent count:', silentCount);
-                if (silentCount >= 2) {       // 2 × 300ms = 600ms confirmed silence
+                if (silentCount >= 8) {   // 8 × 300ms = 2.4s of confirmed silence
                     this.stopSpeechPoller();
                     if (!this.speechStopped) this.onSpeechDone();
                 }
             } else {
-                silentCount = 0;              // still speaking — reset
+                silentCount = 0;          // still speaking — reset
             }
         }, 300);
 
@@ -560,16 +560,21 @@ class NavisApp {
         if (this._speechPoller) { clearInterval(this._speechPoller); this._speechPoller = null; }
     }
 
-    // ── Jaw Keepalive: re-sends mouth=open every 400ms while speaking ──────
-    // Prevents a single dropped WebSocket packet from permanently closing the jaw.
+    // ── Jaw Keepalive: force-sends mouth=OPEN every 400ms while isSpeaking ────
+    // Uses sendHardwareState() directly (not setMouthState) so the ESP32
+    // keeps receiving the signal even during natural sentence pauses where
+    // the state hasn't "changed".
     startJawKeepalive() {
-        this.stopJawKeepalive(); // clear any existing one
+        this.stopJawKeepalive();
+        this.hardwareState.speaking = 1;  // mark as open immediately
         this._jawKeepalive = setInterval(() => {
             if (!this.isSpeaking || this.speechStopped) {
                 this.stopJawKeepalive();
                 return;
             }
-            this.setMouthState(1); // re-confirm mouth is open
+            // Force-send even if already 1 — ensures ESP32 stays synced during pauses
+            this.hardwareState.speaking = 1;
+            this.sendHardwareState();
         }, 400);
     }
 
