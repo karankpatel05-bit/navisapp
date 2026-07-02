@@ -257,7 +257,7 @@ class NavisApp {
 
     showDiscoveredDevice(ip, rssi) {
         if (this.els.discoverResult) {
-            this.discoverResult.style.display = 'flex';
+            this.els.discoverResult.style.display = 'flex';
         }
         if (this.els.discoverFoundIp) {
             this.els.discoverFoundIp.textContent = ip;
