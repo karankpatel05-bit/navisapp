@@ -86,8 +86,15 @@
                 <div class="wifi-setup-body" id="wifiSetupBody" style="display:none;">
                     <p class="wifi-setup-hint">Connect your phone to <strong>Navis_Setup</strong> WiFi first, then enter your home network credentials below.</p>
                     <div class="form-group">
-                        <label for="wifi-ssid">WiFi Network (SSID)</label>
-                        <input type="text" id="wifi-ssid" placeholder="Your home WiFi name" autocomplete="off">
+                        <label for="wifi-ssid-select" style="display:flex; justify-content:space-between; align-items:center;">
+                            WiFi Network
+                            <button type="button" id="wifi-scan-btn" class="scan-btn">Scan</button>
+                        </label>
+                        <select id="wifi-ssid-select" class="wifi-select">
+                            <option value="" disabled selected>Tap Scan to find networks</option>
+                            <option value="__MANUAL__">Enter Manually...</option>
+                        </select>
+                        <input type="text" id="wifi-ssid" placeholder="Your home WiFi name" autocomplete="off" style="display:none; margin-top:8px;">
                     </div>
                     <div class="form-group">
                         <label for="wifi-pass">WiFi Password</label>

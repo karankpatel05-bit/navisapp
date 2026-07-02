@@ -141,17 +141,41 @@ const char PORTAL_HTML[] PROGMEM = R"rawliteral(
     .success{color:#34d399}
     .error{color:#ef4444}
     .icon{font-size:3rem;margin-bottom:16px}
+    select {
+      width:100%;padding:14px 16px;
+      background:rgba(255,255,255,0.05);
+      border:1px solid rgba(255,255,255,0.08);
+      border-radius:8px;color:#e8eaf6;
+      font-size:1rem;transition:all 0.25s;
+      appearance:none;
+      cursor:pointer;
+    }
+    select:focus {
+      outline:none;border-color:#f7931e;
+      box-shadow:0 0 0 3px rgba(247,147,30,0.25);
+    }
+    option { background:#0f1535; color:#fff; }
+    .hidden { display:none !important; }
+    .scan-btn {
+      width:auto; padding:6px 12px; margin:0;
+      font-size:0.8rem; background:rgba(255,255,255,0.1);
+      box-shadow:none; float:right; border-radius:4px;
+    }
+    .scan-btn:hover { background:rgba(255,255,255,0.2); transform:none; }
   </style>
 </head>
 <body>
   <div class="card">
     <div class="icon">📶</div>
     <h1>NAVIS SETUP</h1>
-    <p>Enter your WiFi credentials to connect Navis to your network.</p>
-    <form action="/setup" method="POST">
+    <p>Select your WiFi network to connect Navis.</p>
+    <form action="/setup" method="POST" id="setupForm">
       <div class="form-group">
-        <label for="ssid">WiFi Network (SSID)</label>
-        <input type="text" id="ssid" name="ssid" placeholder="Your WiFi name" required autocomplete="off">
+        <label for="ssid_select">WiFi Network <button type="button" class="scan-btn" id="rescanBtn">Rescan</button></label>
+        <select id="ssid_select">
+          <option value="">Scanning networks...</option>
+        </select>
+        <input type="text" id="ssid" name="ssid" placeholder="Enter WiFi name" class="hidden" autocomplete="off">
       </div>
       <div class="form-group">
         <label for="pass">WiFi Password</label>
@@ -159,8 +183,65 @@ const char PORTAL_HTML[] PROGMEM = R"rawliteral(
       </div>
       <button type="submit">Save & Connect</button>
     </form>
-    <div class="status" id="status">Waiting for credentials...</div>
+    <div class="status" id="status"></div>
   </div>
+  <script>
+    const select = document.getElementById('ssid_select');
+    const ssidInput = document.getElementById('ssid');
+    const rescanBtn = document.getElementById('rescanBtn');
+    const form = document.getElementById('setupForm');
+    const status = document.getElementById('status');
+
+    async function loadNetworks() {
+      select.innerHTML = '<option value="">Scanning networks...</option>';
+      rescanBtn.disabled = true;
+      try {
+        const res = await fetch('/scan');
+        const networks = await res.json();
+        select.innerHTML = '<option value="" disabled selected>Select a network</option>';
+        if (networks.length === 0) {
+            select.innerHTML += '<option value="" disabled>No networks found</option>';
+        } else {
+            networks.forEach(n => {
+                select.innerHTML += `<option value="${n.ssid}">${n.ssid} (${n.rssi} dBm)</option>`;
+            });
+        }
+        select.innerHTML += '<option value="__MANUAL__">Enter Manually...</option>';
+      } catch (e) {
+        select.innerHTML = '<option value="__MANUAL__">Scan failed. Enter Manually...</option>';
+      }
+      rescanBtn.disabled = false;
+    }
+
+    select.addEventListener('change', (e) => {
+      if (e.target.value === '__MANUAL__') {
+        ssidInput.classList.remove('hidden');
+        ssidInput.required = true;
+        ssidInput.value = '';
+        ssidInput.focus();
+      } else {
+        ssidInput.classList.add('hidden');
+        ssidInput.required = false;
+        ssidInput.value = e.target.value;
+      }
+    });
+
+    rescanBtn.addEventListener('click', loadNetworks);
+
+    form.addEventListener('submit', (e) => {
+      if (select.value === '' || (select.value === '__MANUAL__' && !ssidInput.value.trim())) {
+        e.preventDefault();
+        status.textContent = 'Please select or enter a WiFi network.';
+        status.className = 'status error';
+        return;
+      }
+      if (select.value !== '__MANUAL__') {
+        ssidInput.value = select.value;
+      }
+    });
+
+    loadNetworks();
+  </script>
 </body>
 </html>
 )rawliteral";
@@ -350,6 +431,26 @@ void startAPMode() {
   // Serve the captive portal page
   httpServer.on("/", HTTP_GET, []() {
     httpServer.send_P(200, "text/html", PORTAL_HTML);
+  });
+  
+  // WiFi Scanning endpoint
+  httpServer.on("/scan", HTTP_GET, []() {
+    Serial.println("Starting WiFi scan...");
+    int n = WiFi.scanNetworks(false, true); // sync scan, show hidden
+    
+    String json = "[";
+    for (int i = 0; i < n; ++i) {
+      if (i > 0) json += ",";
+      json += "{";
+      json += "\"ssid\":\"" + WiFi.SSID(i) + "\",";
+      json += "\"rssi\":" + String(WiFi.RSSI(i));
+      json += "}";
+    }
+    json += "]";
+    
+    httpServer.sendHeader("Access-Control-Allow-Origin", "*");
+    httpServer.send(200, "application/json", json);
+    Serial.printf("Scan complete: found %d networks\n", n);
   });
   
   // Handle form submission

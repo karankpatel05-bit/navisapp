@@ -328,6 +328,57 @@
     font-weight: 600;
 }
 
+.wifi-select {
+    width: 100%;
+    padding: 14px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    color: #e8eaf6;
+    font-size: 1rem;
+    font-family: var(--font);
+    transition: all 0.25s;
+    appearance: none;
+    cursor: pointer;
+}
+
+.wifi-select:focus {
+    outline: none;
+    border-color: #f7931e;
+    box-shadow: 0 0 0 3px rgba(247, 147, 30, 0.25);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.wifi-select option {
+    background: #0f1535;
+    color: #fff;
+}
+
+.scan-btn {
+    width: auto;
+    padding: 6px 12px;
+    margin: 0;
+    font-size: 0.8rem;
+    font-family: var(--font);
+    font-weight: 600;
+    color: var(--accent);
+    background: rgba(247, 147, 30, 0.1);
+    border: 1px solid rgba(247, 147, 30, 0.2);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.scan-btn:hover {
+    background: rgba(247, 147, 30, 0.2);
+    color: var(--accent-light);
+}
+
+.scan-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .btn-wifi-send {
     width: 100%;
     padding: 12px;
