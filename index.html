@@ -43,10 +43,27 @@
             <h2>NAVIS.CTRL</h2>
             <p>Direct WebSocket ESP32 Controller</p>
             
-            <div class="form-group">
-                <label for="esp-ip">ESP32 IP Address</label>
-                <input type="text" id="esp-ip" placeholder="e.g. 192.168.1.100">
+            <!-- Device Discovery (auto-detect ESP32 on network) -->
+            <div class="discover-section" id="discoverSection">
+                <button type="button" id="discover-btn" class="btn-discover">
+                    <svg class="discover-icon" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3c-1.65-1.66-4.34-1.66-6 0zm-4-4l2 2c2.76-2.76 7.24-2.76 10 0l2-2C15.14 9.14 8.87 9.14 5 13z"/>
+                    </svg>
+                    <span>Discover Navis</span>
+                </button>
+                <div id="discover-status" class="discover-status"></div>
+                <div id="discover-result" class="discover-result" style="display:none;">
+                    <span class="discover-found-icon">🤖</span>
+                    <div class="discover-found-info">
+                        <span class="discover-found-name">Navis Found!</span>
+                        <span class="discover-found-ip" id="discover-found-ip"></span>
+                    </div>
+                    <span class="discover-signal" id="discover-signal"></span>
+                </div>
             </div>
+
+            <!-- Hidden input to store discovered IP -->
+            <input type="hidden" id="esp-ip" value="">
 
             <!-- Groq API Key — one-time entry -->
             <div class="form-group groq-key-group" id="groqKeyGroup" style="margin-top:12px;">

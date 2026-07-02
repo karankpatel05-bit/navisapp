@@ -21,6 +21,7 @@
 #include <WebSocketsServer.h> // Install via Library Manager: "WebSockets" by Markus Sattler
 #include <Preferences.h>
 #include <DNSServer.h>
+#include <ESPmDNS.h>
 
 // ── Linker Fix for ESP32 Core 3.x ─────────────────────────────
 extern "C" bool btInUse() { return false; }
@@ -444,12 +445,34 @@ bool connectToWiFi() {
 void startSTAMode() {
   isAPMode = false;
   
+  // ── mDNS: register as "navis.local" for auto-discovery ──────
+  if (MDNS.begin("navis")) {
+    MDNS.addService("http", "tcp", 80);
+    MDNS.addService("ws", "tcp", 81);
+    Serial.println("mDNS started: http://navis.local");
+  } else {
+    Serial.println("mDNS failed to start");
+  }
+  
   // Start WebSocket server
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
   Serial.println("WebSocket server started on port 81");
   
   // Start HTTP server for utility endpoints
+  
+  // Lightweight discovery endpoint — app pings this to find the ESP32
+  httpServer.on("/discover", HTTP_GET, []() {
+    String json = "{";
+    json += "\"device\":\"navis\",";
+    json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
+    json += "\"ws_port\":81,";
+    json += "\"rssi\":" + String(WiFi.RSSI());
+    json += "}";
+    httpServer.sendHeader("Access-Control-Allow-Origin", "*");
+    httpServer.send(200, "application/json", json);
+  });
+
   httpServer.on("/wifi-status", HTTP_GET, []() {
     String json = "{";
     json += "\"ssid\":\"" + savedSSID + "\",";

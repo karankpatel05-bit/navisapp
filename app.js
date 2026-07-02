@@ -68,6 +68,13 @@ class NavisApp {
             groqKeyInputWrap: document.getElementById('groq-key-input-wrap'),
             changeApiKeyBtn: document.getElementById('change-api-key'),
             
+            // Device Discovery Elements
+            discoverBtn: document.getElementById('discover-btn'),
+            discoverStatus: document.getElementById('discover-status'),
+            discoverResult: document.getElementById('discover-result'),
+            discoverFoundIp: document.getElementById('discover-found-ip'),
+            discoverSignal: document.getElementById('discover-signal'),
+            
             // WiFi Setup Elements
             wifiSetupToggle: document.getElementById('wifi-setup-toggle'),
             wifiSetupBody: document.getElementById('wifiSetupBody'),
@@ -130,7 +137,7 @@ class NavisApp {
 
     loadSavedSettings() {
         const savedIP = localStorage.getItem('esp32_ip');
-        if (savedIP) this.els.espIpInput.value = savedIP;
+        if (savedIP && this.els.espIpInput) this.els.espIpInput.value = savedIP;
 
         const savedKey = localStorage.getItem('groq_api_key');
         if (savedKey && this.els.groqKeyInput) {
@@ -138,6 +145,11 @@ class NavisApp {
             // One-time key: hide input, show saved badge
             if (this.els.groqKeySaved) this.els.groqKeySaved.style.display = 'flex';
             if (this.els.groqKeyInputWrap) this.els.groqKeyInputWrap.style.display = 'none';
+        }
+
+        // If we have a saved IP, show the found result immediately
+        if (savedIP) {
+            this.showDiscoveredDevice(savedIP, '');
         }
     }
 
@@ -208,6 +220,114 @@ class NavisApp {
         this.els.wifiSetupStatus.className = 'wifi-setup-status' + (type ? ` ${type}` : '');
     }
 
+    /* ── Device Discovery ──────────────────────────────────── */
+    async discoverESP32() {
+        if (this.els.discoverBtn) this.els.discoverBtn.disabled = true;
+        if (this.els.discoverResult) this.els.discoverResult.style.display = 'none';
+        this.setDiscoverStatus('Scanning network for Navis...', 'scanning');
+
+        // Strategy 1: Try mDNS hostname (navis.local)
+        const mdnsResult = await this.probeHost('navis.local');
+        if (mdnsResult) {
+            this.onDeviceFound(mdnsResult);
+            return;
+        }
+
+        // Strategy 2: Try last-known IP
+        const lastIP = localStorage.getItem('esp32_ip');
+        if (lastIP) {
+            const lastResult = await this.probeHost(lastIP);
+            if (lastResult) {
+                this.onDeviceFound(lastResult);
+                return;
+            }
+        }
+
+        // Strategy 3: Subnet scan (common home networks)
+        this.setDiscoverStatus('Scanning local subnets...', 'scanning');
+        const subnets = ['192.168.0', '192.168.1', '192.168.4', '10.0.0', '192.168.2', '192.168.10'];
+        
+        for (const subnet of subnets) {
+            // Scan in batches of 25 for speed
+            for (let batchStart = 1; batchStart <= 254; batchStart += 25) {
+                const batchEnd = Math.min(batchStart + 24, 254);
+                this.setDiscoverStatus(`Scanning ${subnet}.${batchStart}-${batchEnd}...`, 'scanning');
+                
+                const promises = [];
+                for (let i = batchStart; i <= batchEnd; i++) {
+                    promises.push(this.probeHost(`${subnet}.${i}`));
+                }
+                
+                const results = await Promise.all(promises);
+                const found = results.find(r => r !== null);
+                if (found) {
+                    this.onDeviceFound(found);
+                    return;
+                }
+            }
+        }
+
+        // Not found
+        this.setDiscoverStatus('❌ Navis not found. Make sure ESP32 is powered on and connected to your WiFi.', 'error');
+        if (this.els.discoverBtn) this.els.discoverBtn.disabled = false;
+    }
+
+    async probeHost(host) {
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 1500);
+            
+            const res = await fetch(`http://${host}/discover`, {
+                signal: controller.signal,
+                cache: 'no-store'
+            });
+            clearTimeout(timeout);
+            
+            if (res.ok) {
+                const data = await res.json();
+                if (data.device === 'navis') {
+                    return data;
+                }
+            }
+        } catch (e) {
+            // Expected for most IPs — connection refused or timeout
+        }
+        return null;
+    }
+
+    onDeviceFound(data) {
+        const ip = data.ip;
+        const rssi = data.rssi;
+        
+        // Save discovered IP
+        if (this.els.espIpInput) this.els.espIpInput.value = ip;
+        localStorage.setItem('esp32_ip', ip);
+        
+        this.showDiscoveredDevice(ip, rssi);
+        this.setDiscoverStatus('', '');
+        if (this.els.discoverBtn) this.els.discoverBtn.disabled = false;
+        this.toast(`Navis found at ${ip}`, 'success');
+    }
+
+    showDiscoveredDevice(ip, rssi) {
+        if (this.els.discoverResult) {
+            this.els.discoverResult.style.display = 'flex';
+        }
+        if (this.els.discoverFoundIp) {
+            this.els.discoverFoundIp.textContent = ip;
+        }
+        if (this.els.discoverSignal && rssi) {
+            const strength = rssi > -50 ? '🟢 Strong' : rssi > -70 ? '🟡 Good' : '🔴 Weak';
+            this.els.discoverSignal.textContent = strength;
+        }
+    }
+
+    setDiscoverStatus(msg, type) {
+        if (!this.els.discoverStatus) return;
+        this.els.discoverStatus.textContent = msg;
+        this.els.discoverStatus.className = 'discover-status' + (type ? ` ${type}` : '');
+    }
+
     /* ── WebSocket Connection ────────────────────────────── */
     connectESP32() {
         if (this.isConnected) {
@@ -215,12 +335,23 @@ class NavisApp {
             return;
         }
 
-        let ip = this.els.espIpInput.value.trim();
+        let ip = this.els.espIpInput?.value?.trim();
+        
+        // If no IP discovered yet, trigger discovery first then connect
         if (!ip) {
-            this.showConnectionError('Please enter an ESP32 IP address');
+            this.discoverESP32().then(() => {
+                const discoveredIP = this.els.espIpInput?.value?.trim();
+                if (discoveredIP) {
+                    this._doWebSocketConnect(discoveredIP);
+                }
+            });
             return;
         }
 
+        this._doWebSocketConnect(ip);
+    }
+
+    _doWebSocketConnect(ip) {
         // Clean and format IP
         ip = ip.replace(/^https?:\/\//, '').replace(/^wss?:\/\//, '');
         if (!ip.includes(':')) {
@@ -228,7 +359,6 @@ class NavisApp {
         }
         ip = `ws://${ip}`;
 
-        localStorage.setItem('esp32_ip', this.els.espIpInput.value.trim());
         this.saveGroqKey();
         
         this.els.connectionStatus.textContent = 'Connecting...';
@@ -261,7 +391,7 @@ class NavisApp {
 
             this.ws.onerror = (error) => {
                 console.error('WebSocket Error:', error);
-                this.showConnectionError('Connection failed. Check IP & Network.');
+                this.showConnectionError('Connection failed. Device may be offline.');
             };
         } catch (e) {
             if (e.name === 'SecurityError') {
@@ -270,7 +400,7 @@ class NavisApp {
                 this.toast('⚠️ HTTPS blocks ESP32 ws:// — switching to Chat Only mode', 'info');
                 setTimeout(() => this.skipESP32(), 1200);
             } else {
-                this.showConnectionError('Invalid IP address format.');
+                this.showConnectionError('Connection error.');
             }
             console.error(e);
         }
@@ -719,9 +849,11 @@ class NavisApp {
         this.els.connectBtn.addEventListener('click', () => { unlockAudio(); this.connectESP32(); });
         if (this.els.skipBtn) this.els.skipBtn.addEventListener('click', () => { unlockAudio(); this.skipESP32(); });
         this.els.disconnectBtn.addEventListener('click', () => this.disconnectESP32());
-        this.els.espIpInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') { unlockAudio(); this.connectESP32(); }
-        });
+
+        // Device Discovery
+        if (this.els.discoverBtn) {
+            this.els.discoverBtn.addEventListener('click', () => this.discoverESP32());
+        }
 
         // Groq API Key change toggle
         if (this.els.changeApiKeyBtn) {
