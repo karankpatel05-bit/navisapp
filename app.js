@@ -55,26 +55,27 @@ class NavisApp {
             ttsToggle: document.getElementById('ttsToggle'),
             toastContainer: document.getElementById('toastContainer'),
             appContainer: document.getElementById('app-container'),
-            
+
             // Connection UI Elements
             connectionOverlay: document.getElementById('connection-overlay'),
             espIpInput: document.getElementById('esp-ip'),
             connectBtn: document.getElementById('connect-btn'),
             skipBtn: document.getElementById('skip-btn'),
             disconnectBtn: document.getElementById('disconnect-btn'),
+            wifiResetBtn: document.getElementById('wifi-reset-btn'),
             connectionStatus: document.getElementById('connection-status'),
             groqKeyInput: document.getElementById('groq-key'),
             groqKeySaved: document.getElementById('groq-key-saved'),
             groqKeyInputWrap: document.getElementById('groq-key-input-wrap'),
             changeApiKeyBtn: document.getElementById('change-api-key'),
-            
+
             // Device Discovery Elements
             discoverBtn: document.getElementById('discover-btn'),
             discoverStatus: document.getElementById('discover-status'),
             discoverResult: document.getElementById('discover-result'),
             discoverFoundIp: document.getElementById('discover-found-ip'),
             discoverSignal: document.getElementById('discover-signal'),
-            
+
             // WiFi Setup Elements
             wifiSetupToggle: document.getElementById('wifi-setup-toggle'),
             wifiSetupBody: document.getElementById('wifiSetupBody'),
@@ -84,7 +85,7 @@ class NavisApp {
             wifiPassInput: document.getElementById('wifi-pass'),
             wifiSendBtn: document.getElementById('wifi-send-btn'),
             wifiSetupStatus: document.getElementById('wifi-setup-status'),
-            
+
             // Test buttons
             testEyesBtn: document.getElementById('test-eyes-btn'),
             testMouthBtn: document.getElementById('test-mouth-btn')
@@ -116,7 +117,7 @@ class NavisApp {
             eyes: 1, // 1 = open, 0 = closed
             speaking: 0 // 1 = speaking, 0 = idle
         };
-        
+
         // Serverless Groq State
         this.groqKey = localStorage.getItem('groq_api_key') || '';
         this.conversationHistory = [];
@@ -130,7 +131,7 @@ class NavisApp {
         this.initTTS();
         this.bindEvents();
         this.autoResize();
-        
+
         if (this.els.ttsToggle) this.els.ttsToggle.classList.add('active');
         if (typeof marked !== 'undefined') {
             marked.setOptions({ breaks: true, gfm: true });
@@ -182,7 +183,7 @@ class NavisApp {
         this.els.wifiSetupBody.style.display = isHidden ? 'block' : 'none';
         const chevron = this.els.wifiSetupToggle?.querySelector('.chevron-icon');
         if (chevron) chevron.style.transform = isHidden ? 'rotate(180deg)' : '';
-        
+
         // Auto-scan on open if empty
         if (!isHidden && this.els.wifiSsidSelect && this.els.wifiSsidSelect.options.length <= 2) {
             this.scanWifiNetworks();
@@ -191,21 +192,21 @@ class NavisApp {
 
     async scanWifiNetworks() {
         if (!this.els.wifiSsidSelect) return;
-        
+
         if (this.els.wifiScanBtn) {
             this.els.wifiScanBtn.disabled = true;
             this.els.wifiScanBtn.textContent = 'Scanning...';
         }
-        
+
         this.els.wifiSsidSelect.innerHTML = '<option value="">Scanning...</option>';
-        
+
         try {
             const res = await fetch('http://192.168.4.1/scan', { timeout: 8000 });
             if (!res.ok) throw new Error('Failed to fetch');
-            
+
             const networks = await res.json();
             this.els.wifiSsidSelect.innerHTML = '<option value="" disabled selected>Select a network</option>';
-            
+
             if (networks.length === 0) {
                 this.els.wifiSsidSelect.innerHTML += '<option value="" disabled>No networks found</option>';
             } else {
@@ -233,9 +234,9 @@ class NavisApp {
         } else {
             ssid = this.els.wifiSsidInput?.value.trim();
         }
-        
+
         const pass = this.els.wifiPassInput?.value || '';
-        
+
         if (!ssid) {
             this.showWifiStatus('Please select or enter a WiFi SSID', 'error');
             return;
@@ -248,11 +249,11 @@ class NavisApp {
             // Send to ESP32 AP captive portal at 192.168.4.1
             const url = `http://192.168.4.1/setup?ssid=${encodeURIComponent(ssid)}&pass=${encodeURIComponent(pass)}`;
             const res = await fetch(url, { mode: 'no-cors', cache: 'no-store' });
-            
+
             // no-cors means we can't read the response, but if it didn't throw, it was sent
             this.showWifiStatus('✅ Credentials sent! ESP32 will restart and connect to your WiFi. Reconnect your phone to your home WiFi network.', 'success');
             this.toast('WiFi credentials sent to ESP32!', 'success');
-            
+
             // Clear inputs
             if (this.els.wifiSsidInput) this.els.wifiSsidInput.value = '';
             if (this.els.wifiPassInput) this.els.wifiPassInput.value = '';
@@ -296,18 +297,18 @@ class NavisApp {
         // Strategy 3: Subnet scan (common home networks)
         this.setDiscoverStatus('Scanning local subnets...', 'scanning');
         const subnets = ['192.168.0', '192.168.1', '192.168.4', '10.0.0', '192.168.2', '192.168.10'];
-        
+
         for (const subnet of subnets) {
             // Scan in batches of 25 for speed
             for (let batchStart = 1; batchStart <= 254; batchStart += 25) {
                 const batchEnd = Math.min(batchStart + 24, 254);
                 this.setDiscoverStatus(`Scanning ${subnet}.${batchStart}-${batchEnd}...`, 'scanning');
-                
+
                 const promises = [];
                 for (let i = batchStart; i <= batchEnd; i++) {
                     promises.push(this.probeHost(`${subnet}.${i}`));
                 }
-                
+
                 const results = await Promise.all(promises);
                 const found = results.find(r => r !== null);
                 if (found) {
@@ -326,13 +327,13 @@ class NavisApp {
         try {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 1500);
-            
+
             const res = await fetch(`http://${host}/discover`, {
                 signal: controller.signal,
                 cache: 'no-store'
             });
             clearTimeout(timeout);
-            
+
             if (res.ok) {
                 const data = await res.json();
                 if (data.device === 'navis') {
@@ -348,11 +349,11 @@ class NavisApp {
     onDeviceFound(data) {
         const ip = data.ip;
         const rssi = data.rssi;
-        
+
         // Save discovered IP
         if (this.els.espIpInput) this.els.espIpInput.value = ip;
         localStorage.setItem('esp32_ip', ip);
-        
+
         this.showDiscoveredDevice(ip, rssi);
         this.setDiscoverStatus('', '');
         if (this.els.discoverBtn) this.els.discoverBtn.disabled = false;
@@ -386,7 +387,7 @@ class NavisApp {
         }
 
         let ip = this.els.espIpInput?.value?.trim();
-        
+
         // If no IP discovered yet, trigger discovery first then connect
         if (!ip) {
             this.discoverESP32().then(() => {
@@ -410,7 +411,7 @@ class NavisApp {
         ip = `ws://${ip}`;
 
         this.saveGroqKey();
-        
+
         this.els.connectionStatus.textContent = 'Connecting...';
         this.els.connectionStatus.className = 'status-text';
         this.els.connectBtn.disabled = true;
@@ -422,14 +423,14 @@ class NavisApp {
                 console.log('WebSocket Connected');
                 this.updateConnectionStatus(true);
                 this.sendHardwareState(); // Send initial state
-                
+
                 // Transition UI
                 this.els.connectionOverlay.classList.add('hidden');
                 this.els.appContainer.style.display = 'flex';
                 // Trigger reflow
                 void this.els.appContainer.offsetWidth;
                 this.els.appContainer.style.opacity = '1';
-                
+
                 this.toast('ESP32 Connected Successfully', 'success');
                 this.loadTrainingData();
             };
@@ -459,17 +460,17 @@ class NavisApp {
     skipESP32() {
         this.saveGroqKey();
         this.isConnected = false;
-        
+
         // Transition UI
         this.els.connectionOverlay.classList.add('hidden');
         this.els.appContainer.style.display = 'flex';
         // Trigger reflow
         void this.els.appContainer.offsetWidth;
         this.els.appContainer.style.opacity = '1';
-        
+
         this.toast('Direct Chat Mode Active', 'success');
         this.loadTrainingData();
-        
+
         // Update welcome UI
         if (this.els.welcomeHero) {
             const title = this.els.welcomeHero.querySelector('.welcome-title');
@@ -486,20 +487,45 @@ class NavisApp {
         this.updateConnectionStatus(false);
     }
 
+    async resetEspWifi() {
+        if (!confirm('Are you sure you want to reset the ESP32 WiFi credentials? The device will restart in AP Mode (Navis_Setup).')) return;
+        
+        const ip = localStorage.getItem('esp32_ip');
+        if (!ip) {
+            this.toast('No ESP32 IP known to reset.', 'error');
+            return;
+        }
+
+        try {
+            this.toast('Sending Reset Command...', 'info');
+            const res = await fetch(`http://${ip}/wifi-reset`, { method: 'POST', mode: 'no-cors' });
+            this.toast('✅ WiFi Reset! ESP32 restarting...', 'success');
+            setTimeout(() => {
+                this.disconnectESP32();
+                // Clear the IP so it doesn't try to auto-connect to the old one
+                localStorage.removeItem('esp32_ip');
+                if (this.els.espIpInput) this.els.espIpInput.value = '';
+            }, 1000);
+        } catch (e) {
+            console.error('Reset failed:', e);
+            this.toast('Failed to reach ESP32 to reset WiFi.', 'error');
+        }
+    }
+
     updateConnectionStatus(connected) {
         this.isConnected = connected;
         if (!connected) {
             this.els.connectBtn.disabled = false;
             this.els.connectionStatus.textContent = 'Disconnected';
             this.els.connectionStatus.className = 'status-text error';
-            
+
             // Revert UI
             this.els.appContainer.style.opacity = '0';
             setTimeout(() => {
                 this.els.appContainer.style.display = 'none';
                 this.els.connectionOverlay.classList.remove('hidden');
             }, 500);
-            
+
             this.ws = null;
         }
     }
@@ -570,7 +596,7 @@ class NavisApp {
                 setTimeout(() => this.sendMessage(), 50);
             }
         };
-        
+
         this.recognition.onerror = (e) => {
             console.error('Speech error:', e.error);
             this.stopRecording();
@@ -579,7 +605,7 @@ class NavisApp {
                 this.toast('Microphone access denied', 'error');
             }
         };
-        
+
         this.recognition.onend = () => {
             this.stopRecording();
             if (this.continuousListening && !this.isProcessing && !this.isSpeaking) {
@@ -728,8 +754,8 @@ class NavisApp {
         const voices = window.speechSynthesis.getVoices();
         if (voices.length > 0) {
             const match = voices.find(v => v.lang.startsWith(langCode.split('-')[0]))
-                       || voices.find(v => v.lang.startsWith('en'))
-                       || voices[0];
+                || voices.find(v => v.lang.startsWith('en'))
+                || voices[0];
             if (match) utterance.voice = match;
         }
 
@@ -890,7 +916,7 @@ class NavisApp {
             if (!this.audioUnlocked) {
                 // Play a silent 1-second WAV to unlock the audio context on user interaction
                 this.audioElement.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
-                this.audioElement.play().catch(()=>{});
+                this.audioElement.play().catch(() => { });
                 this.audioUnlocked = true;
             }
         };
@@ -899,6 +925,9 @@ class NavisApp {
         this.els.connectBtn.addEventListener('click', () => { unlockAudio(); this.connectESP32(); });
         if (this.els.skipBtn) this.els.skipBtn.addEventListener('click', () => { unlockAudio(); this.skipESP32(); });
         this.els.disconnectBtn.addEventListener('click', () => this.disconnectESP32());
+        if (this.els.wifiResetBtn) {
+            this.els.wifiResetBtn.addEventListener('click', () => this.resetEspWifi());
+        }
 
         // Device Discovery
         if (this.els.discoverBtn) {
@@ -1008,12 +1037,12 @@ class NavisApp {
         const s1 = str1.toLowerCase().trim();
         const s2 = str2.toLowerCase().trim();
         if (s1 === s2) return 1.0;
-        
+
         const words1 = new Set(s1.split(/\s+/));
         const words2 = new Set(s2.split(/\s+/));
         let intersection = 0;
         for (const w of words1) if (words2.has(w)) intersection++;
-        
+
         return intersection / Math.max(words1.size, words2.size, 1);
     }
 
@@ -1081,7 +1110,7 @@ class NavisApp {
 
             const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${this.groqKey}`
                 },
@@ -1093,12 +1122,12 @@ class NavisApp {
                 }),
                 signal: this.abortController.signal
             });
-            
+
             if (!res.ok) {
                 const errData = await res.json().catch(() => ({}));
                 throw new Error(errData.error?.message || 'API Error');
             }
-            
+
             const data = await res.json();
             if (this.currentTypingEl) this.currentTypingEl.remove();
 
@@ -1112,7 +1141,7 @@ class NavisApp {
 
             this.addMessage(responseText, 'navis', '✨ AI');
             this.isProcessing = false;
-            
+
             this.speak(responseText, selectedLang);
         } catch (err) {
             if (this.currentTypingEl) this.currentTypingEl.remove();
@@ -1273,7 +1302,7 @@ class NavisApp {
         const data = JSON.parse(localStorage.getItem('navis_training') || '[]');
         data.push({ id: Date.now(), question: q, answer: a });
         localStorage.setItem('navis_training', JSON.stringify(data));
-        
+
         this.els.trainQuestion.value = '';
         this.els.trainAnswer.value = '';
         this.toast('Training saved to phone!', 'success');
@@ -1284,7 +1313,7 @@ class NavisApp {
         let data = JSON.parse(localStorage.getItem('navis_training') || '[]');
         data = data.filter(qa => qa.id != id);
         localStorage.setItem('navis_training', JSON.stringify(data));
-        
+
         this.toast('Removed', 'info');
         this.loadTrainingData();
     }
