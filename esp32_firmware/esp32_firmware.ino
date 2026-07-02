@@ -410,8 +410,9 @@ void clearCredentials() {
 void startAPMode() {
   isAPMode = true;
 
-  WiFi.mode(WIFI_AP_STA); // AP_STA is required to broadcast AP and scan networks
-  WiFi.disconnect();      // Disconnect any failing STA connection
+  WiFi.disconnect(true, true); // Disconnect and erase STA config
+  delay(100);
+  WiFi.mode(WIFI_AP);
   delay(100);
 
   IPAddress apIP(192, 168, 4, 1);
@@ -426,6 +427,7 @@ void startAPMode() {
   Serial.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
   // DNS server — redirect ALL domains to the captive portal
+  dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
   dnsServer.start(53, "*", apIP);
 
   // Serve the captive portal page
@@ -493,21 +495,25 @@ void startAPMode() {
   // Captive portal detection endpoints (Android/iOS auto-detect)
   httpServer.on("/generate_204", HTTP_GET, []() {
     httpServer.sendHeader("Location", "http://192.168.4.1/");
-    httpServer.send(302);
+    httpServer.send(302, "text/plain", "");
   });
   httpServer.on("/hotspot-detect.html", HTTP_GET, []() {
     httpServer.sendHeader("Location", "http://192.168.4.1/");
-    httpServer.send(302);
+    httpServer.send(302, "text/plain", "");
   });
   httpServer.on("/connecttest.txt", HTTP_GET, []() {
     httpServer.sendHeader("Location", "http://192.168.4.1/");
-    httpServer.send(302);
+    httpServer.send(302, "text/plain", "");
+  });
+  httpServer.on("/ncsi.txt", HTTP_GET, []() {
+    httpServer.sendHeader("Location", "http://192.168.4.1/");
+    httpServer.send(302, "text/plain", "");
   });
 
   // Catch-all: redirect everything to the portal
   httpServer.onNotFound([]() {
     httpServer.sendHeader("Location", "http://192.168.4.1/");
-    httpServer.send(302);
+    httpServer.send(302, "text/plain", "");
   });
 
   httpServer.begin();
