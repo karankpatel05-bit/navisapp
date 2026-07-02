@@ -15,13 +15,13 @@
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
+#include <DNSServer.h>
 #include <ESP32Servo.h>
-#include <WiFi.h>
+#include <ESPmDNS.h>
+#include <Preferences.h>
 #include <WebServer.h>
 #include <WebSocketsServer.h> // Install via Library Manager: "WebSockets" by Markus Sattler
-#include <Preferences.h>
-#include <DNSServer.h>
-#include <ESPmDNS.h>
+#include <WiFi.h>
 
 // ── Linker Fix for ESP32 Core 3.x ─────────────────────────────
 extern "C" bool btInUse() { return false; }
@@ -37,7 +37,7 @@ String savedSSID = "";
 String savedPassword = "";
 
 // ── Servers ───────────────────────────────────────────────────
-WebServer httpServer(80);              // Captive portal + REST endpoints
+WebServer httpServer(80); // Captive portal + REST endpoints
 WebSocketsServer webSocket = WebSocketsServer(81);
 DNSServer dnsServer;
 
@@ -331,45 +331,43 @@ int parseField(const String &str, int fieldIndex) {
 //  WEBSOCKET EVENT HANDLER (unchanged)
 // ══════════════════════════════════════════════════════════════
 
-void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
-  switch(type) {
-    case WStype_DISCONNECTED:
-      Serial.printf("[%u] Disconnected!\n", num);
-      break;
-    case WStype_CONNECTED:
-      {
-        IPAddress ip = webSocket.remoteIP(num);
-        Serial.printf("[%u] Connected from %d.%d.%d.%d\n", num, ip[0], ip[1], ip[2], ip[3]);
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload,
+                    size_t length) {
+  switch (type) {
+  case WStype_DISCONNECTED:
+    Serial.printf("[%u] Disconnected!\n", num);
+    break;
+  case WStype_CONNECTED: {
+    IPAddress ip = webSocket.remoteIP(num);
+    Serial.printf("[%u] Connected from %d.%d.%d.%d\n", num, ip[0], ip[1], ip[2],
+                  ip[3]);
+    wsConnected = true;
+    digitalWrite(PIN_LED, HIGH);
+  } break;
+  case WStype_TEXT: {
+    String line = String((char *)payload);
+    line.trim();
+    Serial.printf("[%u] Received text: %s\n", num, line.c_str());
+
+    int eyes = parseField(line, 0);
+    int speaking = parseField(line, 1);
+
+    if ((eyes == 0 || eyes == 1) && (speaking == 0 || speaking == 1)) {
+      applyState(eyes, speaking);
+      lastPacketTime = millis();
+      if (!wsConnected) {
         wsConnected = true;
         digitalWrite(PIN_LED, HIGH);
       }
-      break;
-    case WStype_TEXT:
-      {
-        String line = String((char *)payload);
-        line.trim();
-        Serial.printf("[%u] Received text: %s\n", num, line.c_str());
-        
-        int eyes = parseField(line, 0);
-        int speaking = parseField(line, 1);
-        
-        if ((eyes == 0 || eyes == 1) && (speaking == 0 || speaking == 1)) {
-          applyState(eyes, speaking);
-          lastPacketTime = millis();
-          if (!wsConnected) {
-            wsConnected = true;
-            digitalWrite(PIN_LED, HIGH);
-          }
-        }
-      }
-      break;
-    case WStype_BIN:
-    case WStype_ERROR:      
-    case WStype_FRAGMENT_TEXT_START:
-    case WStype_FRAGMENT_BIN_START:
-    case WStype_FRAGMENT:
-    case WStype_FRAGMENT_FIN:
-      break;
+    }
+  } break;
+  case WStype_BIN:
+  case WStype_ERROR:
+  case WStype_FRAGMENT_TEXT_START:
+  case WStype_FRAGMENT_BIN_START:
+  case WStype_FRAGMENT:
+  case WStype_FRAGMENT_FIN:
+    break;
   }
 }
 
@@ -382,7 +380,7 @@ void loadCredentials() {
   savedSSID = preferences.getString("ssid", "");
   savedPassword = preferences.getString("pass", "");
   preferences.end();
-  
+
   if (savedSSID.length() > 0) {
     Serial.printf("Loaded saved WiFi: %s\n", savedSSID.c_str());
   } else {
@@ -411,79 +409,83 @@ void clearCredentials() {
 
 void startAPMode() {
   isAPMode = true;
-  
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(AP_SSID); // Open network
-  delay(200);
-  
+
+  WiFi.mode(WIFI_AP_STA); // AP_STA is required to broadcast AP and scan networks
+  WiFi.disconnect();      // Disconnect any failing STA connection
+  delay(100);
+
   IPAddress apIP(192, 168, 4, 1);
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-  
+  WiFi.softAP(AP_SSID); // Open network
+  delay(200);
+
   Serial.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   Serial.println("  AP MODE ACTIVE");
   Serial.printf("  SSID: %s\n", AP_SSID);
   Serial.printf("  Portal: http://%s\n", WiFi.softAPIP().toString().c_str());
   Serial.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  
+
   // DNS server — redirect ALL domains to the captive portal
   dnsServer.start(53, "*", apIP);
-  
+
   // Serve the captive portal page
-  httpServer.on("/", HTTP_GET, []() {
-    httpServer.send_P(200, "text/html", PORTAL_HTML);
-  });
-  
+  httpServer.on("/", HTTP_GET,
+                []() { httpServer.send_P(200, "text/html", PORTAL_HTML); });
+
   // WiFi Scanning endpoint
   httpServer.on("/scan", HTTP_GET, []() {
     Serial.println("Starting WiFi scan...");
     int n = WiFi.scanNetworks(false, true); // sync scan, show hidden
-    
+
     String json = "[";
     for (int i = 0; i < n; ++i) {
-      if (i > 0) json += ",";
+      if (i > 0)
+        json += ",";
       json += "{";
       json += "\"ssid\":\"" + WiFi.SSID(i) + "\",";
       json += "\"rssi\":" + String(WiFi.RSSI(i));
       json += "}";
     }
     json += "]";
-    
+
     httpServer.sendHeader("Access-Control-Allow-Origin", "*");
     httpServer.send(200, "application/json", json);
     Serial.printf("Scan complete: found %d networks\n", n);
   });
-  
+
   // Handle form submission
   httpServer.on("/setup", HTTP_POST, []() {
     String ssid = httpServer.arg("ssid");
     String pass = httpServer.arg("pass");
-    
+
     if (ssid.length() == 0) {
       httpServer.send(400, "text/plain", "SSID cannot be empty");
       return;
     }
-    
+
     saveCredentials(ssid, pass);
     httpServer.send_P(200, "text/html", PORTAL_SUCCESS_HTML);
-    
+
     Serial.println("Credentials received. Restarting in 2 seconds...");
     delay(2000);
     ESP.restart();
   });
-  
+
   // Handle API-based setup (from the Navis mobile app)
   httpServer.on("/setup", HTTP_GET, []() {
     String ssid = httpServer.arg("ssid");
     String pass = httpServer.arg("pass");
-    
+
     if (ssid.length() == 0) {
       httpServer.send(400, "application/json", "{\"error\":\"SSID required\"}");
       return;
     }
-    
+
     saveCredentials(ssid, pass);
-    httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Credentials saved. Restarting...\"}");
-    
+    httpServer.send(
+        200, "application/json",
+        "{\"success\":true,\"message\":\"Credentials saved. Restarting...\"}");
+
     delay(2000);
     ESP.restart();
   });
@@ -501,13 +503,13 @@ void startAPMode() {
     httpServer.sendHeader("Location", "http://192.168.4.1/");
     httpServer.send(302);
   });
-  
+
   // Catch-all: redirect everything to the portal
   httpServer.onNotFound([]() {
     httpServer.sendHeader("Location", "http://192.168.4.1/");
     httpServer.send(302);
   });
-  
+
   httpServer.begin();
   Serial.println("Captive portal HTTP server started.");
 }
@@ -518,16 +520,17 @@ void startAPMode() {
 
 bool connectToWiFi() {
   Serial.printf("Connecting to WiFi: %s", savedSSID.c_str());
-  
+
   WiFi.mode(WIFI_STA);
   WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
-  
+
   unsigned long startAttempt = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < STA_CONNECT_TIMEOUT) {
+  while (WiFi.status() != WL_CONNECTED &&
+         millis() - startAttempt < STA_CONNECT_TIMEOUT) {
     delay(500);
     Serial.print(".");
   }
-  
+
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println();
     Serial.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -538,14 +541,14 @@ bool connectToWiFi() {
     Serial.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     return true;
   }
-  
+
   Serial.println("\nFailed to connect to WiFi.");
   return false;
 }
 
 void startSTAMode() {
   isAPMode = false;
-  
+
   // ── mDNS: register as "navis.local" for auto-discovery ──────
   if (MDNS.begin("navis")) {
     MDNS.addService("http", "tcp", 80);
@@ -554,14 +557,14 @@ void startSTAMode() {
   } else {
     Serial.println("mDNS failed to start");
   }
-  
+
   // Start WebSocket server
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
   Serial.println("WebSocket server started on port 81");
-  
+
   // Start HTTP server for utility endpoints
-  
+
   // Lightweight discovery endpoint — app pings this to find the ESP32
   httpServer.on("/discover", HTTP_GET, []() {
     String json = "{";
@@ -584,10 +587,12 @@ void startSTAMode() {
     httpServer.sendHeader("Access-Control-Allow-Origin", "*");
     httpServer.send(200, "application/json", json);
   });
-  
+
   httpServer.on("/wifi-reset", HTTP_GET, []() {
     httpServer.sendHeader("Access-Control-Allow-Origin", "*");
-    httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Credentials cleared. Restarting into AP mode...\"}");
+    httpServer.send(200, "application/json",
+                    "{\"success\":true,\"message\":\"Credentials cleared. "
+                    "Restarting into AP mode...\"}");
     Serial.println("WiFi reset requested. Clearing credentials...");
     delay(500);
     clearCredentials();
@@ -597,22 +602,24 @@ void startSTAMode() {
 
   httpServer.on("/wifi-reset", HTTP_POST, []() {
     httpServer.sendHeader("Access-Control-Allow-Origin", "*");
-    httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Credentials cleared. Restarting into AP mode...\"}");
+    httpServer.send(200, "application/json",
+                    "{\"success\":true,\"message\":\"Credentials cleared. "
+                    "Restarting into AP mode...\"}");
     Serial.println("WiFi reset requested (POST). Clearing credentials...");
     delay(500);
     clearCredentials();
     delay(500);
     ESP.restart();
   });
-  
+
   httpServer.onNotFound([]() {
     httpServer.sendHeader("Access-Control-Allow-Origin", "*");
     httpServer.send(404, "text/plain", "Route not found");
   });
-  
+
   httpServer.begin();
   Serial.println("HTTP server started on port 80");
-  
+
   // Solid LED = connected
   digitalWrite(PIN_LED, HIGH);
 }
@@ -623,17 +630,17 @@ void startSTAMode() {
 
 void setup() {
   Serial.begin(115200);
-  
+
   pinMode(PIN_LED, OUTPUT);
   digitalWrite(PIN_LED, LOW);
-  
+
   mouthServo.attach(PIN_MOUTH, 500, 2400);
   eyesServo.attach(PIN_EYES, 500, 2400);
   resetServos();
-  
+
   // Load saved WiFi credentials from NVS
   loadCredentials();
-  
+
   if (savedSSID.length() > 0) {
     // Try connecting to saved WiFi
     if (connectToWiFi()) {
@@ -647,7 +654,7 @@ void setup() {
     // No saved credentials — start AP mode
     startAPMode();
   }
-  
+
   Serial.println("NAVIS ESP32 Ready.");
 }
 
@@ -657,11 +664,11 @@ void setup() {
 
 void loop() {
   httpServer.handleClient();
-  
+
   if (isAPMode) {
     // DNS server for captive portal redirect
     dnsServer.processNextRequest();
-    
+
     // Blink LED in AP mode (500ms interval)
     if (millis() - lastLedBlink > 500) {
       lastLedBlink = millis();
@@ -670,7 +677,7 @@ void loop() {
     }
     return; // Skip WebSocket + servo logic in AP mode
   }
-  
+
   // ── STA MODE: Normal operation ──────────────────────────────
   webSocket.loop();
 
