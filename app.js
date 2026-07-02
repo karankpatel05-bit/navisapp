@@ -64,6 +64,17 @@ class NavisApp {
             disconnectBtn: document.getElementById('disconnect-btn'),
             connectionStatus: document.getElementById('connection-status'),
             groqKeyInput: document.getElementById('groq-key'),
+            groqKeySaved: document.getElementById('groq-key-saved'),
+            groqKeyInputWrap: document.getElementById('groq-key-input-wrap'),
+            changeApiKeyBtn: document.getElementById('change-api-key'),
+            
+            // WiFi Setup Elements
+            wifiSetupToggle: document.getElementById('wifi-setup-toggle'),
+            wifiSetupBody: document.getElementById('wifiSetupBody'),
+            wifiSsidInput: document.getElementById('wifi-ssid'),
+            wifiPassInput: document.getElementById('wifi-pass'),
+            wifiSendBtn: document.getElementById('wifi-send-btn'),
+            wifiSetupStatus: document.getElementById('wifi-setup-status'),
             
             // Test buttons
             testEyesBtn: document.getElementById('test-eyes-btn'),
@@ -122,7 +133,12 @@ class NavisApp {
         if (savedIP) this.els.espIpInput.value = savedIP;
 
         const savedKey = localStorage.getItem('groq_api_key');
-        if (savedKey && this.els.groqKeyInput) this.els.groqKeyInput.value = savedKey;
+        if (savedKey && this.els.groqKeyInput) {
+            this.els.groqKeyInput.value = savedKey;
+            // One-time key: hide input, show saved badge
+            if (this.els.groqKeySaved) this.els.groqKeySaved.style.display = 'flex';
+            if (this.els.groqKeyInputWrap) this.els.groqKeyInputWrap.style.display = 'none';
+        }
     }
 
     saveGroqKey() {
@@ -132,6 +148,64 @@ class NavisApp {
             this.groqKey = key;
             localStorage.setItem('groq_api_key', key);
         }
+    }
+
+    toggleApiKeyEdit() {
+        if (this.els.groqKeyInputWrap && this.els.groqKeySaved) {
+            const isHidden = this.els.groqKeyInputWrap.style.display === 'none';
+            this.els.groqKeyInputWrap.style.display = isHidden ? 'block' : 'none';
+            this.els.groqKeySaved.style.display = isHidden ? 'none' : 'flex';
+            if (isHidden && this.els.groqKeyInput) {
+                this.els.groqKeyInput.focus();
+            }
+        }
+    }
+
+    /* ── WiFi Provisioning (AP Mode) ──────────────────────── */
+    toggleWifiSetup() {
+        if (!this.els.wifiSetupBody) return;
+        const isHidden = this.els.wifiSetupBody.style.display === 'none';
+        this.els.wifiSetupBody.style.display = isHidden ? 'block' : 'none';
+        const chevron = this.els.wifiSetupToggle?.querySelector('.chevron-icon');
+        if (chevron) chevron.style.transform = isHidden ? 'rotate(180deg)' : '';
+    }
+
+    async sendWifiCredentials() {
+        const ssid = this.els.wifiSsidInput?.value.trim();
+        const pass = this.els.wifiPassInput?.value || '';
+        
+        if (!ssid) {
+            this.showWifiStatus('Please enter a WiFi SSID', 'error');
+            return;
+        }
+
+        this.showWifiStatus('Sending credentials to ESP32...', '');
+        if (this.els.wifiSendBtn) this.els.wifiSendBtn.disabled = true;
+
+        try {
+            // Send to ESP32 AP captive portal at 192.168.4.1
+            const url = `http://192.168.4.1/setup?ssid=${encodeURIComponent(ssid)}&pass=${encodeURIComponent(pass)}`;
+            const res = await fetch(url, { mode: 'no-cors', cache: 'no-store' });
+            
+            // no-cors means we can't read the response, but if it didn't throw, it was sent
+            this.showWifiStatus('✅ Credentials sent! ESP32 will restart and connect to your WiFi. Reconnect your phone to your home WiFi network.', 'success');
+            this.toast('WiFi credentials sent to ESP32!', 'success');
+            
+            // Clear inputs
+            if (this.els.wifiSsidInput) this.els.wifiSsidInput.value = '';
+            if (this.els.wifiPassInput) this.els.wifiPassInput.value = '';
+        } catch (err) {
+            console.error('WiFi setup error:', err);
+            this.showWifiStatus('❌ Failed to reach ESP32. Make sure you are connected to the Navis_Setup WiFi network.', 'error');
+        } finally {
+            if (this.els.wifiSendBtn) this.els.wifiSendBtn.disabled = false;
+        }
+    }
+
+    showWifiStatus(msg, type) {
+        if (!this.els.wifiSetupStatus) return;
+        this.els.wifiSetupStatus.textContent = msg;
+        this.els.wifiSetupStatus.className = 'wifi-setup-status' + (type ? ` ${type}` : '');
     }
 
     /* ── WebSocket Connection ────────────────────────────── */
@@ -648,6 +722,19 @@ class NavisApp {
         this.els.espIpInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') { unlockAudio(); this.connectESP32(); }
         });
+
+        // Groq API Key change toggle
+        if (this.els.changeApiKeyBtn) {
+            this.els.changeApiKeyBtn.addEventListener('click', () => this.toggleApiKeyEdit());
+        }
+
+        // WiFi Setup Events
+        if (this.els.wifiSetupToggle) {
+            this.els.wifiSetupToggle.addEventListener('click', () => this.toggleWifiSetup());
+        }
+        if (this.els.wifiSendBtn) {
+            this.els.wifiSendBtn.addEventListener('click', () => this.sendWifiCredentials());
+        }
 
         // Chat Events
         this.els.sendBtn.addEventListener('click', () => { unlockAudio(); this.sendMessage(); });

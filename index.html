@@ -47,9 +47,38 @@
                 <label for="esp-ip">ESP32 IP Address</label>
                 <input type="text" id="esp-ip" placeholder="e.g. 192.168.1.100">
             </div>
-            <div class="form-group" style="margin-top:12px;">
+
+            <!-- Groq API Key — one-time entry -->
+            <div class="form-group groq-key-group" id="groqKeyGroup" style="margin-top:12px;">
                 <label for="groq-key" style="font-size:0.85rem;">Groq API Key</label>
-                <input type="password" id="groq-key" placeholder="gsk_..." style="font-family:monospace;font-size:0.85rem;">
+                <div id="groq-key-saved" class="api-key-saved" style="display:none;">
+                    <span class="api-key-badge">✅ API Key Saved</span>
+                    <button type="button" id="change-api-key" class="api-key-change-link">Change</button>
+                </div>
+                <div id="groq-key-input-wrap">
+                    <input type="password" id="groq-key" placeholder="gsk_..." style="font-family:monospace;font-size:0.85rem;">
+                </div>
+            </div>
+
+            <!-- WiFi Setup (for ESP32 AP provisioning) -->
+            <div class="wifi-setup-section" id="wifiSetupSection">
+                <button type="button" id="wifi-setup-toggle" class="wifi-setup-toggle">
+                    <span>📶 Setup ESP32 WiFi</span>
+                    <svg class="chevron-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>
+                </button>
+                <div class="wifi-setup-body" id="wifiSetupBody" style="display:none;">
+                    <p class="wifi-setup-hint">Connect your phone to <strong>Navis_Setup</strong> WiFi first, then enter your home network credentials below.</p>
+                    <div class="form-group">
+                        <label for="wifi-ssid">WiFi Network (SSID)</label>
+                        <input type="text" id="wifi-ssid" placeholder="Your home WiFi name" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="wifi-pass">WiFi Password</label>
+                        <input type="password" id="wifi-pass" placeholder="WiFi password" autocomplete="off">
+                    </div>
+                    <button type="button" id="wifi-send-btn" class="btn-wifi-send">Send to ESP32</button>
+                    <div id="wifi-setup-status" class="wifi-setup-status"></div>
+                </div>
             </div>
             
             <button id="connect-btn" class="btn-primary">Connect System</button>
