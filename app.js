@@ -76,16 +76,6 @@ class NavisApp {
             discoverFoundIp: document.getElementById('discover-found-ip'),
             discoverSignal: document.getElementById('discover-signal'),
 
-            // WiFi Setup Elements
-            wifiSetupToggle: document.getElementById('wifi-setup-toggle'),
-            wifiSetupBody: document.getElementById('wifiSetupBody'),
-            wifiSsidSelect: document.getElementById('wifi-ssid-select'),
-            wifiSsidInput: document.getElementById('wifi-ssid'),
-            wifiScanBtn: document.getElementById('wifi-scan-btn'),
-            wifiPassInput: document.getElementById('wifi-pass'),
-            wifiSendBtn: document.getElementById('wifi-send-btn'),
-            wifiSetupStatus: document.getElementById('wifi-setup-status'),
-
             // Test buttons
             testEyesBtn: document.getElementById('test-eyes-btn'),
             testMouthBtn: document.getElementById('test-mouth-btn')
@@ -174,101 +164,6 @@ class NavisApp {
                 this.els.groqKeyInput.focus();
             }
         }
-    }
-
-    /* ── WiFi Provisioning (AP Mode) ──────────────────────── */
-    toggleWifiSetup() {
-        if (!this.els.wifiSetupBody) return;
-        const isHidden = this.els.wifiSetupBody.style.display === 'none';
-        this.els.wifiSetupBody.style.display = isHidden ? 'block' : 'none';
-        const chevron = this.els.wifiSetupToggle?.querySelector('.chevron-icon');
-        if (chevron) chevron.style.transform = isHidden ? 'rotate(180deg)' : '';
-
-        // Auto-scan on open if empty
-        if (!isHidden && this.els.wifiSsidSelect && this.els.wifiSsidSelect.options.length <= 2) {
-            this.scanWifiNetworks();
-        }
-    }
-
-    async scanWifiNetworks() {
-        if (!this.els.wifiSsidSelect) return;
-
-        if (this.els.wifiScanBtn) {
-            this.els.wifiScanBtn.disabled = true;
-            this.els.wifiScanBtn.textContent = 'Scanning...';
-        }
-
-        this.els.wifiSsidSelect.innerHTML = '<option value="">Scanning...</option>';
-
-        try {
-            const res = await fetch('http://192.168.4.1/scan', { timeout: 8000 });
-            if (!res.ok) throw new Error('Failed to fetch');
-
-            const networks = await res.json();
-            this.els.wifiSsidSelect.innerHTML = '<option value="" disabled selected>Select a network</option>';
-
-            if (networks.length === 0) {
-                this.els.wifiSsidSelect.innerHTML += '<option value="" disabled>No networks found</option>';
-            } else {
-                networks.forEach(n => {
-                    this.els.wifiSsidSelect.innerHTML += `<option value="${n.ssid}">${n.ssid} (${n.rssi} dBm)</option>`;
-                });
-            }
-        } catch (e) {
-            console.error('Scan failed:', e);
-            this.els.wifiSsidSelect.innerHTML = '<option value="" disabled selected>Scan failed</option>';
-            this.showWifiStatus('Ensure you are connected to Navis_Setup WiFi', 'error');
-        } finally {
-            this.els.wifiSsidSelect.innerHTML += '<option value="__MANUAL__">Enter Manually...</option>';
-            if (this.els.wifiScanBtn) {
-                this.els.wifiScanBtn.disabled = false;
-                this.els.wifiScanBtn.textContent = 'Scan';
-            }
-        }
-    }
-
-    async sendWifiCredentials() {
-        let ssid = '';
-        if (this.els.wifiSsidSelect && this.els.wifiSsidSelect.value !== '__MANUAL__') {
-            ssid = this.els.wifiSsidSelect.value;
-        } else {
-            ssid = this.els.wifiSsidInput?.value.trim();
-        }
-
-        const pass = this.els.wifiPassInput?.value || '';
-
-        if (!ssid) {
-            this.showWifiStatus('Please select or enter a WiFi SSID', 'error');
-            return;
-        }
-
-        this.showWifiStatus('Sending credentials to ESP32...', '');
-        if (this.els.wifiSendBtn) this.els.wifiSendBtn.disabled = true;
-
-        try {
-            // Send to ESP32 AP captive portal at 192.168.4.1
-            const url = `http://192.168.4.1/setup?ssid=${encodeURIComponent(ssid)}&pass=${encodeURIComponent(pass)}`;
-            const res = await fetch(url, { mode: 'no-cors', cache: 'no-store' });
-
-            // no-cors means we can't read the response, but if it didn't throw, it was sent
-            this.showWifiStatus('✅ Credentials sent! ESP32 will restart and connect to your WiFi. Reconnect your phone to your home WiFi network.', 'success');
-            this.toast('WiFi credentials sent to ESP32!', 'success');
-
-            // Clear inputs
-            if (this.els.wifiSsidInput) this.els.wifiSsidInput.value = '';
-            if (this.els.wifiPassInput) this.els.wifiPassInput.value = '';
-        } catch (err) {
-            console.error('WiFi setup error:', err);
-            this.showWifiStatus('❌ Failed to reach ESP32. Make sure you are connected to the Navis_Setup WiFi network.', 'error');
-        } finally {
-            if (this.els.wifiSendBtn) this.els.wifiSendBtn.disabled = false;
-        }
-    }
-
-    showWifiStatus(msg, type) {
-        if (!this.els.wifiSetupStatus) return;
-        this.els.wifiSetupStatus.textContent = msg;
-        this.els.wifiSetupStatus.className = 'wifi-setup-status' + (type ? ` ${type}` : '');
     }
 
     /* ── Device Discovery ──────────────────────────────────── */
@@ -362,7 +257,7 @@ class NavisApp {
 
     showDiscoveredDevice(ip, rssi) {
         if (this.els.discoverResult) {
-            this.els.discoverResult.style.display = 'flex';
+            this.discoverResult.style.display = 'flex';
         }
         if (this.els.discoverFoundIp) {
             this.els.discoverFoundIp.textContent = ip;
@@ -939,28 +834,6 @@ class NavisApp {
             this.els.changeApiKeyBtn.addEventListener('click', () => this.toggleApiKeyEdit());
         }
 
-        // WiFi Setup Events
-        if (this.els.wifiSetupToggle) {
-            this.els.wifiSetupToggle.addEventListener('click', () => this.toggleWifiSetup());
-        }
-        if (this.els.wifiScanBtn) {
-            this.els.wifiScanBtn.addEventListener('click', () => this.scanWifiNetworks());
-        }
-        if (this.els.wifiSsidSelect) {
-            this.els.wifiSsidSelect.addEventListener('change', (e) => {
-                if (e.target.value === '__MANUAL__') {
-                    if (this.els.wifiSsidInput) {
-                        this.els.wifiSsidInput.style.display = 'block';
-                        this.els.wifiSsidInput.focus();
-                    }
-                } else {
-                    if (this.els.wifiSsidInput) this.els.wifiSsidInput.style.display = 'none';
-                }
-            });
-        }
-        if (this.els.wifiSendBtn) {
-            this.els.wifiSendBtn.addEventListener('click', () => this.sendWifiCredentials());
-        }
 
         // Chat Events
         this.els.sendBtn.addEventListener('click', () => { unlockAudio(); this.sendMessage(); });
